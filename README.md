@@ -246,6 +246,11 @@ install_schedule.bat            register an hourly refresh
 install_schedule.bat remove     unregister it
 ```
 
+Run it from the clone — `%~dp0` is baked into the registered command, so running
+a copy from somewhere else registers that somewhere else. It ends in `pause` for
+the double-click case, which means it blocks forever if you script it; redirect
+stdin from `NUL` when you do.
+
 That registers a Task Scheduler job running `refresh_quiet.vbs`, which runs the
 refresh with `--quiet` in a hidden window: no console flashing over your work, no
 prompts, output to `.mirror\mirror.log`. It runs as you, while you are logged on.
