@@ -46,6 +46,14 @@ DOCS = [
     {   # degenerate: no author, no year, no title
         "id": "d6", "created": "2023-06-01T00:00:00Z", "type": "generic",
     },
+    {   # publisher unicode: U+2010 in the name, U+2013 page range, curly quotes,
+        # a non-breaking space and a zero-width space -- all of it ASCII-lookalike
+        "id": "d8", "created": "2024-07-01T00:00:00Z", "type": "journal",
+        "title": "Curing at 50\u00b0C \u00b1 2: the \u201cinert\u201d case \u2013 a 5\u2009min study\u200b",
+        "authors": [{"first_name": "Jean\u2010Pierre", "last_name": "Pascault"}],
+        "year": 2024, "source": "J.\u00a0Appl. Polym. Sci.", "volume": "49",
+        "pages": "1441\u20131452", "identifiers": {"doi": "10.1002/app.1993.070490812"},
+    },
 ]
 
 ANNOTATIONS = [
@@ -108,6 +116,34 @@ def main():
     check("{1234--1245}" in bib, "page range converted to --")
     check("Müller, Jörg and Smith, A. B." in bib, "author list formatted")
     check(bib.count("\n@") == len(DOCS), "one entry per document")
+
+    print("\nunicode punctuation (non-UTF-8 LaTeX safety)")
+    check(mm.tex_escape("Jean\u2010Pierre") == "Jean-Pierre", "U+2010 hyphen -> ASCII hyphen")
+    check(mm.tex_escape("Jean\u2011Pierre") == "Jean-Pierre", "U+2011 non-breaking hyphen -> ASCII")
+    check(mm.tex_escape("a \u2013 b") == "a -- b", "en dash -> --")
+    check(mm.tex_escape("a \u2014 b") == "a --- b", "em dash -> ---")
+    check(mm.tex_escape("\u201cq\u201d") == "``q''", "curly double quotes -> TeX quotes")
+    check(mm.tex_escape("\u2018q\u2019") == "`q'", "curly single quotes -> TeX quotes")
+    check(mm.tex_escape("a\u00a0b") == "a b", "non-breaking space -> ordinary space")
+    check(mm.tex_escape("a\u200bb") == "ab", "zero-width space dropped")
+    check(mm.tex_escape("50\u00b0C") == r"50\textdegree{}C", "degree sign -> \\textdegree")
+    check(mm.tex_escape("\u00b1 2") == "$\\pm$ 2", "plus-minus -> math mode")
+    # the replacement must not be escaped a second time
+    check("textbackslash" not in mm.tex_escape("50\u00b0C"), "LaTeX replacement not re-escaped")
+    # accented letters are legitimate UTF-8 and must survive untouched
+    check(mm.tex_escape("M\u00fcller, J\u00f6rg") == "M\u00fcller, J\u00f6rg", "accents left alone")
+    # TeX specials still escaped alongside the new rules
+    check(mm.tex_escape("50% \u2013 a_b") == r"50\% -- a\_b", "specials still escaped")
+
+    check(mm.format_pages("1441\u20131452") == "1441--1452", "en dash page range -> --")
+    check(mm.format_pages("1441-1452") == "1441--1452", "hyphen page range -> --")
+    check(mm.format_pages("1441--1452") == "1441--1452", "already-correct page range unchanged")
+
+    d8 = bib[bib.index("@article{Pascault2024"):]
+    d8 = d8[:d8.index("\n@")] if "\n@" in d8 else d8
+    check("Jean-Pierre" in d8, "U+2010 gone from the author field in library.bib")
+    check("{1441--1452}" in d8, "en dash page range fixed in library.bib")
+    check(not any(ord(c) > 127 for c in d8), f"entry is pure ASCII -> {[c for c in d8 if ord(c) > 127]}")
     check("title    = {{Yield" in bib, "title double-braced for case protection")
     check("author = {{NIST}}" in bib, "corporate author double-braced")
     check(bib.count("institution") == 0, "thesis uses school, not institution")

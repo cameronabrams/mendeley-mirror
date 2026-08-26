@@ -493,10 +493,70 @@ TEX_ESCAPES = {
 }
 
 
+# Unicode that publisher metadata carries but a non-UTF-8 LaTeX build cannot read.
+# The dashes, quotes and spaces are the dangerous ones: they masquerade as ASCII, so
+# a broken .bib looks correct in an editor. Crossref hands out U+2010 for hyphenated
+# names ("Jean-Pierre") and U+2013 for page ranges. Accented letters are deliberately
+# NOT in here -- they are legitimate UTF-8 and every modern engine handles them.
+UNICODE_TEX = {
+    # dashes and hyphens
+    "\u2010": "-", "\u2011": "-", "\u2012": "--", "\u2013": "--",
+    "\u2014": "---", "\u2015": "---", "\u2212": "$-$",
+    # quotation marks and primes
+    "\u2018": "`", "\u2019": "'", "\u201a": ",", "\u201b": "`",
+    "\u201c": "``", "\u201d": "''", "\u201e": ",,",
+    "\u2032": "$'$", "\u2033": "$''$",
+    "\u00ab": "``", "\u00bb": "''", "\u00a1": r"!`", "\u00bf": r"?`",
+    "\u02da": r"\textdegree{}",  # RING ABOVE, routinely misused for a degree sign
+    # spaces of every width collapse to an ordinary one
+    "\u00a0": " ", "\u2002": " ", "\u2003": " ", "\u2007": " ", "\u2008": " ",
+    "\u2009": " ", "\u200a": " ", "\u202f": " ", "\u3000": " ",
+    # symbols with standard LaTeX spellings
+    "\u00b0": r"\textdegree{}", "\u2103": r"\textdegree{}C",
+    "\u00b1": "$\\pm$", "\u00d7": "$\\times$", "\u00f7": "$\\div$",
+    "\u2248": "$\\approx$", "\u223c": "$\\sim$", "\u2260": "$\\neq$",
+    "\u2264": "$\\leq$", "\u2265": "$\\geq$", "\u221e": "$\\infty$",
+    "\u2190": "$\\leftarrow$", "\u2192": "$\\rightarrow$",
+    "\u2194": "$\\leftrightarrow$", "\u21d4": "$\\Leftrightarrow$",
+    "\u2211": "$\\sum$", "\u220f": "$\\prod$", "\u2208": "$\\in$",
+    "\u2206": "$\\Delta$", "\u2202": "$\\partial$",
+    "\u00b7": "$\\cdot$", "\u2217": "$*$", "\u2215": "/",
+    "\u2026": r"\ldots{}", "\u2022": r"\textbullet{}",
+    "\u00a9": r"\textcopyright{}", "\u00ae": r"\textregistered{}",
+    "\u2122": r"\texttrademark{}", "\u00a7": r"\S{}",
+    "\u2020": r"\dag{}", "\u2021": r"\ddag{}",
+    # mojibake from a bad extraction -- drop rather than emit a tofu box
+    "\ufffd": "",
+}
+
+# any run of dash-like characters in a page range is one BibTeX en-dash
+PAGE_DASHES = re.compile(r"[-\u2010-\u2015\u2212]+")
+
+
+def format_pages(s: str) -> str:
+    """1234-1245, 1234\u20131245 and an already-correct 1234--1245 all give 1234--1245."""
+    return PAGE_DASHES.sub("--", tex_escape_plain(s))
+
+
+def tex_escape_plain(s: str) -> str:
+    """Normalize unicode without applying the LaTeX dash rules -- for page ranges."""
+    out = []
+    for ch in str(s):
+        if unicodedata.category(ch) in ("Cf", "Co"):
+            continue  # zero-width joiners, BOMs, private-use junk
+        out.append(ch)
+    return "".join(out).replace("\n", " ").strip()
+
+
 def tex_escape(s: str) -> str:
     out = []
     for ch in str(s):
-        out.append(TEX_ESCAPES.get(ch, ch))
+        if ch in UNICODE_TEX:
+            out.append(UNICODE_TEX[ch])  # already LaTeX; must not be re-escaped
+        elif unicodedata.category(ch) in ("Cf", "Co"):
+            continue  # zero-width joiners, BOMs, private-use junk
+        else:
+            out.append(TEX_ESCAPES.get(ch, ch))
     return "".join(out).replace("\n", " ").strip()
 
 
@@ -544,7 +604,7 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
     add("year", doc.get("year"))
     add("volume", doc.get("volume"))
     add("number", doc.get("issue"))
-    add("pages", (doc.get("pages") or "").replace("-", "--") or None)
+    add("pages", format_pages(doc.get("pages") or "") or None)
     add("publisher", tex_escape(doc.get("publisher")) if doc.get("publisher") else None)
     if doc.get("institution"):
         # a thesis wants school; a report wants institution
