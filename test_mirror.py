@@ -309,9 +309,40 @@ def main():
     sout = md.parent
     lock = mm.acquire_lock(md)
     check(lock is not None and lock.exists(), "first run takes the lock")
+    check(lock.name == f"run.lock.{mm.host_name()}", "the lock is named per host")
     check(mm.acquire_lock(md) is None, "a second concurrent run backs off")
     os.utime(lock, (0, 0))  # pretend it was left behind days ago
-    check(mm.acquire_lock(md) is not None, "a stale lock is ignored")
+    check(mm.acquire_lock(md) is None,
+          "a live run keeps its lock however old -- the first full run takes hours")
+
+    # a lock whose process is gone is stale at any age: that is the failure that
+    # blocked every run for 9.5 h, a dead pid behind a lock only age could clear.
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    lock.write_text(json.dumps({"pid": dead.pid, "host": mm.host_name(),
+                                "started": "2026-01-01T00:00:00+00:00"}),
+                    encoding="utf-8")
+    if mm._pid_alive(dead.pid):
+        check(True, "(pid reused; skipping the dead-pid takeover case)")
+    else:
+        check(mm.acquire_lock(md) is not None,
+              "a lock from a dead process is taken over immediately")
+
+    # another machine's lock is advisory: a synced folder cannot carry a mutex,
+    # and treating it as binding is what let one stale file stop every host.
+    lock.unlink(missing_ok=True)  # the takeover above left our own live lock
+    foreign = md / "run.lock.othermachine"
+    foreign.write_text(json.dumps({"pid": 1, "host": "othermachine",
+                                   "started": "2026-01-01T00:00:00+00:00"}),
+                       encoding="utf-8")
+    check(mm.acquire_lock(md) is not None, "another host's lock does not block us")
+    check(foreign.exists(), "and we leave that host's lock alone")
+
+    lock.unlink(missing_ok=True)
+    legacy = md / "run.lock"
+    legacy.write_text("{}", encoding="utf-8")
+    check(mm.acquire_lock(md) is not None and not legacy.exists(),
+          "a shared run.lock from an older version is cleared")
 
     t0 = _dt.datetime.now(_dt.timezone.utc)
     mm.write_status(sout, True, t0)

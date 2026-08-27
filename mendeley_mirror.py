@@ -42,6 +42,7 @@ import base64
 import json
 import os
 import re
+import socket
 import sys
 import time
 import unicodedata
@@ -952,20 +953,80 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
 LOCK_STALE_HOURS = 12
 
 
+def host_name() -> str:
+    """Stable per-machine name, safe to put in a filename."""
+    raw = (os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME")
+           or socket.gethostname() or "unknown")
+    return re.sub(r"[^A-Za-z0-9._-]", "_", raw.split(".")[0]) or "unknown"
+
+
+def _pid_alive(pid: object) -> bool:
+    """True if we can tell the process is running, and when we cannot tell.
+
+    POSIX only. On Windows os.kill() with any signal other than CTRL_C_EVENT /
+    CTRL_BREAK_EVENT calls TerminateProcess -- signal 0 would kill the very run
+    we are asking about -- so there we say "cannot tell" and fall back to age.
+    """
+    if os.name != "posix" or not isinstance(pid, int):
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not ours to signal
+    except OSError:
+        return True
+    return True
+
+
 def acquire_lock(mirror_dir: Path) -> Path | None:
-    """Refuse to start if another run is live. Scheduled + manual runs collide
-    otherwise, and the first full run takes hours."""
-    lock = mirror_dir / "run.lock"
+    """Refuse to start if another run on THIS machine is live.
+
+    The lock is per-host -- ``run.lock.<host>`` -- because the mirror directory
+    is a synced folder and a single shared ``run.lock`` is not a mutex there.
+    Two ways it failed: one writer's delete loses to another peer's surviving
+    copy, so a dead run's lock gets resurrected indefinitely; and two machines
+    starting inside the propagation window never see each other's lock anyway.
+    One writer per filename makes the delete stick.
+
+    Our own host's lock is authoritative and checkable: if the process is gone
+    the lock is stale whatever its age, and if it is alive we back off however
+    old it is -- the first full run legitimately takes hours. Another host's
+    lock is advisory: we say so and continue, since we can neither verify its
+    process nor trust the sync to have converged.
+    """
+    lock = mirror_dir / f"run.lock.{host_name()}"
     if lock.exists():
+        held = load_json(lock, {})
         age_h = (time.time() - lock.stat().st_mtime) / 3600
-        if age_h < LOCK_STALE_HOURS:
-            held = load_json(lock, {})
-            note(f"Another run started {age_h:.1f} h ago on "
-                 f"{held.get('host', '?')} (pid {held.get('pid', '?')}); stopping.")
-            return None
-        note(f"Ignoring a stale lock left {age_h:.0f} h ago.")
-    save_json(lock, {"pid": os.getpid(), "host": os.environ.get("COMPUTERNAME")
-                     or os.environ.get("HOSTNAME") or "?",
+        if _pid_alive(held.get("pid")):
+            if os.name == "posix" or age_h < LOCK_STALE_HOURS:
+                note(f"Another run started {age_h:.1f} h ago on this machine "
+                     f"(pid {held.get('pid', '?')}); stopping.")
+                return None
+            note(f"Ignoring a stale lock left {age_h:.0f} h ago.")
+        else:
+            note(f"Clearing a lock from pid {held.get('pid', '?')}, "
+                 f"left {age_h:.1f} h ago; that process is gone.")
+
+    for other in sorted(mirror_dir.glob("run.lock.*")):
+        if other == lock:
+            continue
+        held = load_json(other, {})
+        age_h = (time.time() - other.stat().st_mtime) / 3600
+        note(f"Note: {held.get('host', other.suffix.lstrip('.'))} has a lock "
+             f"{age_h:.1f} h old (pid {held.get('pid', '?')}). Advisory only -- "
+             f"continuing. If that run is live, expect sync conflicts.")
+
+    legacy = mirror_dir / "run.lock"
+    if legacy.exists():
+        age_h = (time.time() - legacy.stat().st_mtime) / 3600
+        note(f"Removing a shared run.lock from an older version "
+             f"({age_h:.0f} h old); locks are per-host now.")
+        legacy.unlink(missing_ok=True)
+
+    save_json(lock, {"pid": os.getpid(), "host": host_name(),
                      "started": datetime.now(timezone.utc).isoformat()})
     return lock
 
