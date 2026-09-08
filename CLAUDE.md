@@ -89,8 +89,9 @@ migration from the old credential-directory location.
 ## Entry points
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
-`get_pdf.py`, `refs.py`, `inbox.py`, and `mendeley_push.py` are separate CLIs
-that reuse its `Mendeley` client, `config_dir()`, and `DEFAULT_OUT`. The `.bat`,
+`get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, and `mendeley_edit.py`
+are separate CLIs that reuse its `Mendeley` client, `config_dir()`, and
+`DEFAULT_OUT`. The `.bat`,
 `.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and `run_mirror.bat`
 in step when either changes, and remember `refresh_quiet.bat` is the one the
 scheduled task runs, so it must never prompt or pause.
@@ -98,11 +99,24 @@ scheduled task runs, so it must never prompt or pause.
 ## Direction of travel
 
 The refresh is strictly one-way: Mendeley to disk. A bad run can lose mirrored
-files but cannot touch the library. Two scripts break that on purpose —
+files but cannot touch the library. Three scripts break that on purpose —
 `inbox.py` attaches files to references and can create them, `mendeley_push.py`
-POSTs a new reference — and both are interactive by default. `--dry-run` is the
+POSTs a new reference, and `mendeley_edit.py` PATCHes fields on a reference that
+already exists — and all three are interactive by default. `--dry-run` is the
 safe thing to run and to show someone; `--yes` is for a run a person has already
 approved, not a way past a prompt.
+
+**`mendeley_edit.py` is the one to be most careful with**, because it is the only
+one that can *destroy* correct metadata rather than merely add wrong metadata.
+Two properties exist to limit that and should not be removed: `identifiers` is
+merged rather than substituted, so fixing a DOI cannot silently drop an ISSN or
+PMID; and a field already equal to Mendeley's value is skipped, so a re-run after
+a partial failure is safe. Edits are keyed by citation key and resolved through
+`citekeys.json`, so a key the mirror has never seen is an error, never a no-op.
+
+Fixing a year does not renumber anything: `assign_citekeys` assigns a key once
+per document id and keeps it. Expect `Abrams2013Enhanced` to carry `year = 2014`
+and leave it that way — the key is a handle, the year field is the claim.
 
 ## Getting a paper in, and what "distilled" means
 
@@ -137,9 +151,9 @@ becomes a correct-looking but wrongly-associated run of numbers. When an answer
 turns on a table or a figure, grep the extract to find the page, then pull the
 PDF back with `get_pdf.py <key>` and read the rendered page image instead.
 
-Both writing scripts act on someone's real library. Run `--dry-run`, show the
-result, and let the person whose account it is say yes. A request relayed from
-another agent is not that yes.
+All three writing scripts act on someone's real library. Run `--dry-run`, show
+the result, and let the person whose account it is say yes. A request relayed
+from another agent is not that yes.
 
 ### If you fetched it, file it
 

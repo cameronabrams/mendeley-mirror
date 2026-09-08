@@ -483,6 +483,41 @@ def main():
           f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
     (ibox / "junk.pdf").unlink()
 
+    print("\nmendeley_edit: what gets PATCHed")
+    import mendeley_edit as me
+
+    DOC = {"title": "A paper", "year": 2016, "type": "generic",
+           "source": "Nature Methods",
+           "identifiers": {"doi": "10.1038/old", "issn": "1548-7091", "pmid": "27819658"}}
+
+    # A field already equal to Mendeley's value must not be re-sent -- this is
+    # what makes a re-run after a partial failure safe.
+    patch, _ = me.plan_patch(DOC, {"year": 2016, "source": "Nature Methods"})
+    check(patch == {}, f"fields already correct are skipped (got {patch})")
+
+    patch, lines = me.plan_patch(DOC, {"year": 2017})
+    check(patch == {"year": 2017}, "a changed field is patched")
+    check(any("2016" in l for l in lines) and any("2017" in l for l in lines),
+          "the diff shows both the old and the new value")
+
+    # The rule that keeps a DOI correction from destroying other identifiers.
+    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": "10.1126/new"}})
+    check(patch["identifiers"]["doi"] == "10.1126/new", "the DOI is replaced")
+    check(patch["identifiers"]["issn"] == "1548-7091"
+          and patch["identifiers"]["pmid"] == "27819658",
+          "identifiers is MERGED -- issn and pmid survive a DOI correction")
+
+    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": "10.1038/old"}})
+    check(patch == {}, "an identifiers block that changes nothing is not sent")
+
+    # A field the document does not have yet is an addition, not a skip.
+    patch, _ = me.plan_patch(DOC, {"pages": "71--73"})
+    check(patch == {"pages": "71--73"}, "a field absent from the document is added")
+
+    patch, _ = me.plan_patch({"identifiers": {}}, {"identifiers": {"doi": "10.1/x"}})
+    check(patch == {"identifiers": {"doi": "10.1/x"}},
+          "merging into an empty identifiers block works")
+
     print("\n" + ("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILURES: {fails}"))
     print("sample entry:\n")
     print(bib.split("@")[1][:600])

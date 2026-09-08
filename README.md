@@ -13,6 +13,7 @@ mendeley-mirror/               ← this repo, clone it where you like
 ├── refs.py                what a paper cites, and which of those you already have
 ├── inbox.py               file PDFs you saved into inbox/ back into Mendeley
 ├── mendeley_push.py       add one reference *to* Mendeley, from an arXiv ID or DOI
+├── mendeley_edit.py       correct fields on references already in Mendeley
 ├── run_mirror.bat         double-click to refresh (Windows)
 ├── run_mirror.sh          ./run_mirror.sh (Linux/macOS)
 ├── install_schedule.bat   register/remove the hourly background refresh
@@ -207,8 +208,8 @@ anywhere. Nothing is uploaded until you confirm.
 
 ## Adding a paper to Mendeley
 
-The mirror is one-way; this is the one deliberate exception. `mendeley_push.py`
-adds a single reference to Mendeley itself from an arXiv ID or a DOI:
+The mirror is one-way. `mendeley_push.py` adds a single reference to Mendeley
+itself from an arXiv ID or a DOI:
 
 ```
 uv run --script mendeley_push.py --arxiv 2507.07887
@@ -223,6 +224,47 @@ extracted text if you later attach a PDF, and a row in `index.md`.
 Metadata comes from arXiv's Atom API or from Crossref, so you get real authors
 and a real year instead of a stub to fix up by hand later. arXiv preprints go in
 as `type: journal` with `source: arXiv`, because Mendeley has no preprint type.
+
+## Correcting a reference already in Mendeley
+
+`mendeley_edit.py` PATCHes fields on references that are already there. It is the
+most invasive of the three writers, because it changes metadata rather than
+adding something new — so it is `--dry-run` first, always.
+
+```
+uv run --script mendeley_edit.py --edits fixes.json --dry-run   # read the diff
+uv run --script mendeley_edit.py --edits fixes.json             # asks first
+uv run --script mendeley_edit.py --edits fixes.json --yes       # already approved
+```
+
+The edits file is JSON keyed by **citation key**, not by Mendeley's UUIDs, so you
+name references the way the rest of the mirror does:
+
+```json
+{
+  "Huang2016Charmm": {"year": 2017},
+  "Bennett2023Microsecond": {
+    "type": "journal", "source": "Science Advances", "year": 2024,
+    "pages": "eadj0396", "identifiers": {"doi": "10.1126/sciadv.adj0396"}
+  }
+}
+```
+
+Keys resolve through `.mirror/citekeys.json`, so a key the mirror has never seen
+is an error rather than a silent no-op. `identifiers` is **merged** into what the
+document already has — correcting a DOI will not drop an ISSN or a PMID —
+and any value already equal to Mendeley's is skipped rather than re-sent, so
+re-running after a partial failure is safe.
+
+Citation keys do **not** change when you fix a year: keys are assigned once per
+document id and kept in `citekeys.json`. `Abrams2013Enhanced` keeps its handle
+while its `year` field reads 2014. The key is a handle; the year field is the
+claim.
+
+One thing worth knowing when a reference looks like it is missing its journal:
+BibTeX only emits `journal` for entry type `article`, and Mendeley's `generic`
+type maps to `@misc`. A reference with the right journal name but the wrong
+*type* loses it on the way out. Fix the type, not the metadata.
 Nothing is sent until you confirm at a `[y/N]` prompt; `--yes` skips the prompt,
 `--dry-run` prints the payload and sends nothing at all.
 
@@ -352,5 +394,6 @@ Mendeley account. It prints a line per check and exits non-zero on failure.
   Ctrl-C, so an interrupted first run picks up where it left off.
 - The mirror is one-directional, by design. A refresh never writes back to
   Mendeley, so a bad run can't damage your library. Edit in Mendeley, re-run,
-  done. The only thing that writes to Mendeley is `mendeley_push.py`, run by
-  hand, one reference at a time, with a confirmation prompt.
+  done. Three scripts write to Mendeley, all by hand and all with a confirmation
+  prompt: `inbox.py` attaches files, `mendeley_push.py` adds a reference, and
+  `mendeley_edit.py` corrects fields on one that is already there.
