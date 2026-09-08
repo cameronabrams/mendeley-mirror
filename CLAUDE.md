@@ -141,6 +141,12 @@ Mendeley account:
 - `mendeley_push.py` adds a reference with no PDF behind it, from an arXiv ID or
   a DOI.
 
+Both take the **issue** year through `csl_year()`, never Crossref's `issued`.
+`issued` is the date a work first appeared *online*, so an Advance Access paper
+arrives a year early — that is how CHARMM36m was filed as 2016 and cited that way
+in a manuscript before anyone noticed. If you add another acquisition path, call
+`csl_year()` rather than reading a date-part yourself.
+
 Then the next refresh distills it: the text is extracted to `text/<citekey>.md`
 with `<!-- p. N -->` markers, highlights land in `annotations/<citekey>.md`, and
 the PDF itself is deleted. That extract is the durable artifact — the words off
