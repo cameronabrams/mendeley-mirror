@@ -483,6 +483,30 @@ def main():
           f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
     (ibox / "junk.pdf").unlink()
 
+    print("\ncsl_year: the issue year, not the online one")
+    from mendeley_push import csl_year
+
+    # The real shape of CHARMM36m's Crossref record: online Nov 2016, issue Jan 2017.
+    check(csl_year({"published-online": {"date-parts": [[2016, 11, 7]]},
+                    "published-print":  {"date-parts": [[2017, 1]]},
+                    "issued":           {"date-parts": [[2016, 11, 7]]}}) == 2017,
+          "published-print beats issued (the Advance Access case)")
+
+    # Some records carry the issue date only under journal-issue.
+    check(csl_year({"journal-issue": {"published-print": {"date-parts": [[2014]]}},
+                    "issued": {"date-parts": [[2013, 11, 22]]}}) == 2014,
+          "journal-issue.published-print is used when there is no published-print")
+
+    # A preprint has no print date at all, and issued is then correct.
+    check(csl_year({"issued": {"date-parts": [[2025, 7, 10]]}}) == 2025,
+          "issued is the fallback for anything never printed")
+    check(csl_year({"published-print": {"date-parts": [[2018]]},
+                    "issued": {"date-parts": [[2018]]}}) == 2018,
+          "agreement is not disturbed")
+    check(csl_year({}) is None, "no date at all yields None, not a crash")
+    check(csl_year({"issued": {"date-parts": [[None]]}}) is None,
+          "a null date-part yields None")
+
     print("\nHTML entities from Crossref/Mendeley")
     # Real case: Crossref hands back "Molecular Systems Design &amp; Engineering".
     # Escaping without decoding first left "\\&amp;", which renders the entity

@@ -222,7 +222,11 @@ next refresh brings it back down like any other reference — with a citation ke
 extracted text if you later attach a PDF, and a row in `index.md`.
 
 Metadata comes from arXiv's Atom API or from Crossref, so you get real authors
-and a real year instead of a stub to fix up by hand later. arXiv preprints go in
+and a real year instead of a stub to fix up by hand later. "Real year" means the
+**issue** year: Crossref's `issued` is the date a paper first appeared *online*,
+so for an Advance Access paper it is a year early. Both writers prefer
+`published-print`, falling back to `issued` only for work that was never printed —
+a preprint, a data set, a born-digital journal. arXiv preprints go in
 as `type: journal` with `source: arXiv`, because Mendeley has no preprint type.
 
 ## Correcting a reference already in Mendeley

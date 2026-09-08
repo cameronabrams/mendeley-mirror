@@ -61,7 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from mendeley_mirror import (API, DEFAULT_OUT, Mendeley, config_dir,
                                  get_app_config, load_json, mirror_state_dir)
-    from mendeley_push import CSL_TO_MENDELEY, DOC_CT, one, split_name
+    from mendeley_push import CSL_TO_MENDELEY, DOC_CT, csl_year, one, split_name
     from get_pdf import cache_dir
 except ImportError as exc:
     sys.exit(f"inbox.py must sit beside the other mirror scripts ({exc})")
@@ -126,7 +126,6 @@ def pdf_metadata_dois(path: Path) -> list[str]:
 
 def normalize(raw: dict) -> dict:
     """Both metadata shapes, reduced to the fields a Mendeley record needs."""
-    parts = ((raw.get("issued") or {}).get("date-parts") or [[None]])[0]
     return {
         # Share the pusher's type map so a book filed through the inbox is a
         # book, not a journal article.
@@ -135,7 +134,8 @@ def normalize(raw: dict) -> dict:
         "doi": (raw.get("DOI") or raw.get("doi") or "").lower(),
         "title": one(raw.get("title")),
         "source": one(raw.get("container-title")),
-        "year": parts[0] if parts and parts[0] else None,
+        # The issue year, not the online one -- see csl_year in mendeley_push.
+        "year": csl_year(raw),
         "volume": one(raw.get("volume")),
         "issue": one(raw.get("issue")),
         "pages": one(raw.get("page")),

@@ -57,6 +57,31 @@ from mendeley_mirror import (  # noqa: E402
 DOC_CT = "application/vnd.mendeley-document.1+json"
 
 
+def csl_year(meta: dict) -> int | None:
+    """The year a citation should carry: the ISSUE year, not the online one.
+
+    CSL "issued" is the earliest date a work appeared, so for an Advance
+    Access paper it is the online date -- and that is what every exporter
+    takes. The issue year lives in "published-print", or on some records only
+    in "journal-issue.published-print".
+
+    Preferring those is not pedantry. CHARMM36m went online in November 2016
+    and appeared in the January 2017 issue; taking "issued" filed it as 2016,
+    and it was cited that way in a manuscript before anyone noticed. CGenFF,
+    APBS and the AlphaFold database were wrong the same way.
+
+    Falls back to "issued" when there is no print date at all, which is the
+    right answer for a preprint, a data set, or a born-digital journal.
+    """
+    for src in (meta.get("published-print"),
+                (meta.get("journal-issue") or {}).get("published-print"),
+                meta.get("issued")):
+        parts = ((src or {}).get("date-parts") or [[None]])[0]
+        if parts and parts[0]:
+            return parts[0]
+    return None
+
+
 def die(msg: str) -> None:
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -160,7 +185,6 @@ def from_doi(doi: str) -> dict:
         die(f"{doi} did not resolve to metadata -- got {r.headers.get('Content-Type')}")
     m = r.json()
 
-    parts = (m.get("issued", {}).get("date-parts") or [[None]])[0]
     authors = [
         {"first_name": a.get("given", ""), "last_name": a.get("family", "")}
         for a in m.get("author", []) if a.get("family")
@@ -169,7 +193,7 @@ def from_doi(doi: str) -> dict:
         "type": CSL_TO_MENDELEY.get((m.get("type") or "").lower(), "generic"),
         "title": one(m.get("title")),
         "authors": authors,
-        "year": parts[0] if parts and parts[0] else None,
+        "year": csl_year(m),
         "source": one(m.get("container-title")),
         "identifiers": {"doi": doi.lower()},
     }
