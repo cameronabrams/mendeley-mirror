@@ -45,6 +45,7 @@ import re
 import socket
 import sys
 import time
+import html
 import unicodedata
 import urllib.parse
 import webbrowser
@@ -539,10 +540,26 @@ def format_pages(s: str) -> str:
     return PAGE_DASHES.sub("--", tex_escape_plain(s))
 
 
+def html_decode(s: str) -> str:
+    """Undo HTML entities before anything else looks at the string.
+
+    Crossref and Mendeley hand back journal names, titles and URLs with HTML
+    entities in them -- "Molecular Systems Design &amp; Engineering" is a real
+    example. Escaping that for LaTeX without decoding it first turns the "&"
+    into "\\&" and leaves the "amp;" sitting there, so the bibliography renders
+    "Design &amp; Engineering". Decode first, then escape, and the reader sees
+    an ampersand.
+
+    Only one level is undone, which is what we want: a genuinely double-encoded
+    "&amp;amp;" should come back as the literal "&amp;" it encodes.
+    """
+    return html.unescape(str(s))
+
+
 def tex_escape_plain(s: str) -> str:
     """Normalize unicode without applying the LaTeX dash rules -- for page ranges."""
     out = []
-    for ch in str(s):
+    for ch in html_decode(s):
         if unicodedata.category(ch) in ("Cf", "Co"):
             continue  # zero-width joiners, BOMs, private-use junk
         out.append(ch)
@@ -551,7 +568,7 @@ def tex_escape_plain(s: str) -> str:
 
 def tex_escape(s: str) -> str:
     out = []
-    for ch in str(s):
+    for ch in html_decode(s):
         if ch in UNICODE_TEX:
             out.append(UNICODE_TEX[ch])  # already LaTeX; must not be re-escaped
         elif unicodedata.category(ch) in ("Cf", "Co"):
@@ -621,7 +638,10 @@ def bib_entry(doc: dict, key: str, include_abstract: bool = True) -> str:
         add("eprint", ids["arxiv"])
     websites = doc.get("websites") or []
     if websites:
-        add("url", websites[0])
+        # URLs are emitted raw -- no TeX escaping -- so they need the decode of
+        # their own, or a query string arrives as "...&amp;lr=..." and does not
+        # resolve when clicked.
+        add("url", html_decode(websites[0]))
     if doc.get("keywords"):
         add("keywords", tex_escape(", ".join(doc["keywords"])))
     if include_abstract and doc.get("abstract"):

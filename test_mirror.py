@@ -483,6 +483,33 @@ def main():
           f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
     (ibox / "junk.pdf").unlink()
 
+    print("\nHTML entities from Crossref/Mendeley")
+    # Real case: Crossref hands back "Molecular Systems Design &amp; Engineering".
+    # Escaping without decoding first left "\\&amp;", which renders the entity
+    # literally in the bibliography.
+    check(mm.tex_escape("Molecular Systems Design &amp; Engineering")
+          == r"Molecular Systems Design \& Engineering",
+          "&amp; in a journal name decodes to a real ampersand")
+    check(mm.tex_escape("ACS Applied Materials &amp; Interfaces")
+          == r"ACS Applied Materials \& Interfaces",
+          "the other affected journal name too")
+
+    # Decoding must not stop a literal ampersand from being escaped.
+    check(mm.tex_escape("Smith & Jones") == r"Smith \& Jones",
+          "a literal & is still escaped")
+    check(mm.tex_escape("AT&T") == r"AT\&T", "an & inside a word is still escaped")
+
+    # Exactly one level, so a genuinely double-encoded string survives as text.
+    check(mm.tex_escape("&amp;amp;") == r"\&amp;", "only one level of decoding is undone")
+
+    check(mm.tex_escape("a &lt;b&gt; c") == "a <b> c", "&lt; and &gt; decode")
+    check(mm.tex_escape("caf&eacute;") == "café", "named character entities decode")
+
+    # URLs are emitted raw, so they carry their own decode -- a query string with
+    # &amp; between parameters does not resolve when clicked.
+    check(mm.html_decode("http://x/?a=1&amp;b=2") == "http://x/?a=1&b=2",
+          "&amp; in a URL query string decodes")
+
     print("\nmendeley_edit: what gets PATCHed")
     import mendeley_edit as me
 
