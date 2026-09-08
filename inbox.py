@@ -358,6 +358,32 @@ def upload(client: Mendeley, doc_id: str, path: Path) -> str:
 
 # --------------------------------------------------------------------------
 
+def closing_report(attached: list[str], skipped: list[tuple[str, str]],
+                   stuck: list[tuple[str, str]], dry_run: bool = False) -> str:
+    """The last thing the run prints, and it must match what actually happened.
+
+    Two constraints, both learned the hard way. The instruction to refresh is
+    printed only when something was actually attached -- a failed run used to
+    end by telling you to go pull down text that was never uploaded. And
+    anything still sitting in inbox/ is printed LAST, because the common way to
+    read this output is `| tail`, which shows the end and throws the exit status
+    away. A reader who sees only the final lines must not come away thinking a
+    failed run succeeded.
+    """
+    out: list[str] = []
+    if attached and not dry_run:
+        out.append("Run ./run_mirror.sh to pull the extracted text down.")
+    if skipped:
+        out.append(f"{len(skipped)} left in inbox/ (already had a PDF; --replace to override):")
+        out += [f"      {name} -- {why}" for name, why in skipped]
+    if stuck:
+        out.append(f"! {len(stuck)} NOT filed, still in inbox/:")
+        out += [f"      {name} -- {why}" for name, why in stuck]
+        out.append("  Nothing was sent for these. Give each a DOI file name or a"
+                   " sidecar JSON, then run again.")
+    return "\n" + "\n".join(out) if out else ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="File PDFs dropped in inbox/ into Mendeley.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
@@ -379,14 +405,17 @@ def main() -> int:
 
     print(f"{len(pdfs)} PDF(s) in {box}\n")
     plan = []
+    stuck: list[tuple[str, str]] = []
     for path in pdfs:
         try:
             msg, doi, how = identify(path)
         except RuntimeError as exc:
             print(f"  ! {path.name}\n      {exc}")
+            stuck.append((path.name, str(exc)))
             continue
         if not msg:
             print(f"  ? {path.name}\n      cannot identify: {how}")
+            stuck.append((path.name, f"cannot identify: {how}"))
             continue
         doc_id, key = existing_document(out, doi, msg.get('title', ''))
         where = f"already in the library as {key}" if key else "new to the library"
@@ -396,10 +425,12 @@ def main() -> int:
         plan.append((path, msg, doi, doc_id, key))
 
     if not plan:
+        print(closing_report([], [], stuck))
         return 1
     if args.dry_run:
         print("\n--dry-run: nothing sent.")
-        return 0
+        print(closing_report([], [], stuck, dry_run=True))
+        return 1 if stuck else 0
 
     tokens = load_json(config_dir() / "tokens.json", {})
     if not tokens.get("access_token"):
@@ -413,7 +444,9 @@ def main() -> int:
 
     client = Mendeley(get_app_config(), tokens)
     dest = cache_dir()
-    status = 0
+    status = 1 if stuck else 0
+    attached: list[str] = []
+    skipped: list[tuple[str, str]] = []
     remote: dict[str, str] | None = None
     for path, msg, doi, doc_id, key in plan:
         try:
@@ -429,8 +462,10 @@ def main() -> int:
                 print(f"  + created reference for {doi}")
             elif has_attachment(client, doc_id) and not args.replace:
                 print(f"  = {key} already has a PDF attached; skipping (--replace to override)")
+                skipped.append((path.name, f"{key} already has a PDF"))
                 continue
             upload(client, doc_id, path)
+            attached.append(path.name)
             print(f"  ✓ attached {path.name} -> {key or doi}")
             if not args.keep:
                 # Prefer the citation key; fall back to the DOI, then to the
@@ -445,9 +480,10 @@ def main() -> int:
                     shutil.move(str(side), dest / f"{stem}.json")
         except Exception as exc:
             print(f"  ! {path.name}: {exc}")
+            stuck.append((path.name, str(exc)))
             status = 1
 
-    print("\nRun ./run_mirror.sh to pull the extracted text down.")
+    print(closing_report(attached, skipped, stuck))
     return status
 
 

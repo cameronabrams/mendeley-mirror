@@ -388,6 +388,56 @@ def main():
     check(r.stdout.strip().endswith("Nguyen2019Study.pdf") and r.returncode == 0,
           "a cached PDF is returned without authenticating")
 
+    print("\ninbox closing report")
+    import inbox
+
+    # A clean run: the refresh instruction appears, and nothing else.
+    r = inbox.closing_report(["a.pdf"], [], [])
+    check("Run ./run_mirror.sh" in r, "a successful run says to refresh")
+    check("NOT filed" not in r, "a successful run reports no failures")
+
+    # A failed run must NOT tell you to go pull down text that was never sent.
+    r = inbox.closing_report([], [], [("a.pdf", "upload refused (403)")])
+    check("Run ./run_mirror.sh" not in r,
+          "a run that attached nothing does not tell you to refresh")
+    check("NOT filed" in r and "a.pdf" in r and "403" in r,
+          "the failure, the file name and the reason are all reported")
+
+    # The mixed case is the dangerous one: `| tail` shows only the end, so the
+    # failure has to be the LAST thing printed, after the refresh instruction.
+    r = inbox.closing_report(["good.pdf"], [], [("bad.pdf", "boom")])
+    check("Run ./run_mirror.sh" in r, "the part that worked still says to refresh")
+    lines = [ln for ln in r.strip().splitlines() if ln.strip()]
+    check(r.index("NOT filed") > r.index("Run ./run_mirror.sh"),
+          "the failure block comes after the success line, so tail shows it")
+    check("bad.pdf" in "\n".join(lines[-3:]), "the failed file name survives a tail -3")
+
+    # Skipped files are left in the inbox too, and saying so is not an error.
+    r = inbox.closing_report(["a.pdf"], [("b.pdf", "Key2020Word already has a PDF")], [])
+    check("--replace" in r and "b.pdf" in r, "a skipped file is reported with the escape hatch")
+    check("NOT filed" not in r, "a skipped file is not counted as a failure")
+
+    check(inbox.closing_report([], [], [], dry_run=True) == "",
+          "a clean dry run prints no closing block")
+    r = inbox.closing_report([], [], [("a.pdf", "cannot identify: no DOI")], dry_run=True)
+    check("Run ./run_mirror.sh" not in r and "a.pdf" in r,
+          "a dry run reports what it could not identify but never says to refresh")
+
+    print("\ninbox exit status (offline: an unreadable PDF needs no network)")
+    ibox = out / "inbox"
+    ibox.mkdir(exist_ok=True)
+    (ibox / "junk.pdf").write_bytes(b"not a pdf at all")
+    r = subprocess.run([sys.executable, str(Path(__file__).parent / "inbox.py"),
+                        "--out", str(out), "--dry-run"],
+                       capture_output=True, text=True, timeout=120)
+    check(r.returncode != 0, f"a file it cannot identify exits nonzero (got {r.returncode})")
+    check("junk.pdf" in r.stdout and "NOT filed" in r.stdout,
+          "the unidentifiable file is named in the closing block")
+    tail3 = "\n".join([ln for ln in r.stdout.strip().splitlines() if ln.strip()][-3:])
+    check("junk.pdf" in tail3 or "NOT filed" in tail3,
+          f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
+    (ibox / "junk.pdf").unlink()
+
     print("\n" + ("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILURES: {fails}"))
     print("sample entry:\n")
     print(bib.split("@")[1][:600])
