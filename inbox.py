@@ -267,8 +267,24 @@ def existing_document(out: Path, doi: str, title: str = "") -> tuple[str, str]:
     """(mendeley id, citekey) for a reference already in the library, else ('','')."""
     bib = (out / "library.bib").read_text(encoding="utf-8") if (out / "library.bib").exists() else ""
     key = ""
-    if not doi:
-        # No DOI to match on -- fall back to an exact normalized title match.
+    if doi:
+        for chunk in re.split(r"\n@", bib)[1:]:
+            if re.search(rf"doi\s*=\s*\{{{re.escape(doi)}\}}", chunk, re.I):
+                m = re.match(r"\w+\{([^,]+),", chunk)
+                key = m.group(1).strip() if m else ""
+                break
+    if not key:
+        # Either there was no DOI, or the DOI matched nothing -- fall back to an
+        # exact normalized title match.
+        #
+        # The fallback used to be skipped whenever a DOI was present, which made
+        # a whole class of reference invisible: an arXiv paper pushed into
+        # Mendeley without a doi field cannot be found by DOI, so dropping its
+        # PDF in the inbox reported "new to the library" and would have created
+        # a second reference for a paper already held. Trying the title after
+        # the DOI misses costs one pass and cannot match more loosely than the
+        # no-DOI path already does -- it demands exact equality of the
+        # normalized title.
         want = " ".join(words(title))
         for chunk in re.split(r"\n@", bib)[1:]:
             m = re.search(r"title\s*=\s*\{+(.*?)\}+,?\s*$", chunk, re.M | re.S)
@@ -276,11 +292,6 @@ def existing_document(out: Path, doi: str, title: str = "") -> tuple[str, str]:
                 k = re.match(r"\w+\{([^,]+),", chunk)
                 key = k.group(1).strip() if k else ""
                 break
-    for chunk in re.split(r"\n@", bib)[1:]:
-        if doi and re.search(rf"doi\s*=\s*\{{{re.escape(doi)}\}}", chunk, re.I):
-            m = re.match(r"\w+\{([^,]+),", chunk)
-            key = m.group(1).strip() if m else ""
-            break
     if not key:
         return "", ""
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})

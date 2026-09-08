@@ -423,6 +423,51 @@ def main():
     check("Run ./run_mirror.sh" not in r and "a.pdf" in r,
           "a dry run reports what it could not identify but never says to refresh")
 
+    print("\ninbox: finding a reference the library already holds")
+    ibx = tmp / "ibx"
+    (ibx / ".mirror").mkdir(parents=True)
+    (ibx / "library.bib").write_text("""
+@article{Doe2025Widget,
+  author  = {Doe, Jane},
+  title   = {{A Study of Widgets: the Sequel}},
+  journal = {arXiv},
+  year    = {2025},
+  eprint  = {2501.00001},
+}
+
+@article{Roe2024Gadget,
+  author  = {Roe, Richard},
+  title   = {{On Gadgets}},
+  journal = {J. Things},
+  year    = {2024},
+  doi     = {10.1000/gadget},
+}
+""", encoding="utf-8")
+    (ibx / ".mirror" / "citekeys.json").write_text(
+        json.dumps({"m1": "Doe2025Widget", "m2": "Roe2024Gadget"}), encoding="utf-8")
+
+    check(inbox.existing_document(ibx, "10.1000/gadget")[1] == "Roe2024Gadget",
+          "a DOI that is in the bib still matches by DOI")
+    check(inbox.existing_document(ibx, "10.1000/gadget")[0] == "m2",
+          "the matched entry resolves to its Mendeley id")
+
+    # The regression this guards: an arXiv reference with no doi field. Its PDF
+    # carries a resolvable DOI, so the DOI search runs and finds nothing -- and
+    # the title fallback used to be skipped entirely whenever a DOI was present,
+    # reporting "new to the library" and duplicating a paper already held.
+    doc, key = inbox.existing_document(ibx, "10.48550/arxiv.2501.00001",
+                                       "A Study of Widgets: the Sequel")
+    check(key == "Doe2025Widget",
+          f"a DOI that matches nothing falls back to the title (got {key!r})")
+    check(doc == "m1", "the title-matched entry resolves to its Mendeley id")
+
+    check(inbox.existing_document(ibx, "10.9999/nope", "A Paper Nobody Has") == ("", ""),
+          "a genuinely new paper is still reported as new")
+    check(inbox.existing_document(ibx, "", "On Gadgets")[1] == "Roe2024Gadget",
+          "the no-DOI title path still works")
+    check(inbox.existing_document(ibx, "10.9999/nope", "A Study of Widgets")[1] == "",
+          "a partial title does not match -- equality is still exact")
+
     print("\ninbox exit status (offline: an unreadable PDF needs no network)")
     ibox = out / "inbox"
     ibox.mkdir(exist_ok=True)
