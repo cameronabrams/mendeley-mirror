@@ -256,6 +256,16 @@ document already has — correcting a DOI will not drop an ISSN or a PMID —
 and any value already equal to Mendeley's is skipped rather than re-sent, so
 re-running after a partial failure is safe.
 
+**`null` removes.** The merge protects good identifiers, but on its own it made a
+bad one impossible to delete — and a DOI that resolves to an unrelated paper is
+worse than no DOI at all. So an explicit null deletes:
+
+```json
+{"Pecina1978Observation": {"identifiers": {"doi": null, "pmid": null}}}
+```
+
+Removing an identifier the document does not have is a no-op, not an error.
+
 Citation keys do **not** change when you fix a year: keys are assigned once per
 document id and kept in `citekeys.json`. `Abrams2013Enhanced` keeps its handle
 while its `year` field reads 2014. The key is a handle; the year field is the

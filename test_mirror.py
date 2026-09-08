@@ -541,6 +541,20 @@ def main():
     patch, _ = me.plan_patch(DOC, {"pages": "71--73"})
     check(patch == {"pages": "71--73"}, "a field absent from the document is added")
 
+    # null REMOVES. The merge above protects good identifiers; without an
+    # explicit removal it also made a bad one impossible to delete, and a DOI
+    # that resolves to an unrelated paper is worse than no DOI at all.
+    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": None}})
+    check(patch["identifiers"] == {"issn": "1548-7091", "pmid": "27819658"},
+          "a null identifier is removed and the others survive")
+    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": None, "isbn": "978"}})
+    check(patch["identifiers"] == {"issn": "1548-7091", "pmid": "27819658", "isbn": "978"},
+          "removal and addition compose in one edit")
+    patch, _ = me.plan_patch(DOC, {"identifiers": {"doi": None, "issn": None, "pmid": None}})
+    check(patch == {"identifiers": {}}, "removing every identifier sends an empty object")
+    patch, _ = me.plan_patch(DOC, {"identifiers": {"arxiv": None}})
+    check(patch == {}, "removing an identifier the document does not have is a no-op")
+
     patch, _ = me.plan_patch({"identifiers": {}}, {"identifiers": {"doi": "10.1/x"}})
     check(patch == {"identifiers": {"doi": "10.1/x"}},
           "merging into an empty identifiers block works")

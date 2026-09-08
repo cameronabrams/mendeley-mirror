@@ -111,7 +111,11 @@ one that can *destroy* correct metadata rather than merely add wrong metadata.
 Two properties exist to limit that and should not be removed: `identifiers` is
 merged rather than substituted, so fixing a DOI cannot silently drop an ISSN or
 PMID; and a field already equal to Mendeley's value is skipped, so a re-run after
-a partial failure is safe. Edits are keyed by citation key and resolved through
+a partial failure is safe. A third exists to make it complete: **an explicit
+`null` removes a field**, because the merge alone left a wrong identifier
+undeletable, and a DOI resolving to an unrelated paper is worse than no DOI.
+Mendeley's PATCH replaces the whole `identifiers` object rather than merging it
+server-side — verified against a live record — which is what makes removal work. Edits are keyed by citation key and resolved through
 `citekeys.json`, so a key the mirror has never seen is an error, never a no-op.
 
 Fixing a year does not renumber anything: `assign_citekeys` assigns a key once

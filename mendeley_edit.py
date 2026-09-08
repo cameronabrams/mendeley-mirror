@@ -80,6 +80,11 @@ def plan_patch(current: dict, edits: dict) -> tuple[dict, list[str]]:
 
     - "identifiers" is MERGED into what the document already has. Substituting
       it would drop an ISSN or a PMID every time someone corrected a DOI.
+    - null REMOVES. The merge above protects good identifiers, but it also made
+      a bad one impossible to delete, and a record whose DOI resolves to an
+      unrelated paper is worse than one with no DOI at all. So an explicit null
+      deletes: {"identifiers": {"doi": null}} drops the DOI and keeps the rest,
+      and {"volume": null} clears a top-level field.
     - a field already equal to Mendeley's value is omitted, so a re-run after a
       partial failure sends nothing for the records that already succeeded.
     """
@@ -89,6 +94,9 @@ def plan_patch(current: dict, edits: dict) -> tuple[dict, list[str]]:
         old_value = current.get(field)
         if field == "identifiers":
             merged = {**(old_value or {}), **new_value}
+            for k, v in new_value.items():
+                if v is None:
+                    merged.pop(k, None)
             if merged == (old_value or {}):
                 continue
             patch[field] = merged
