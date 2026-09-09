@@ -25,10 +25,38 @@ library has nothing on this" has produced exactly the wrong answer while a
 directly relevant paper — including work by the library's own owner — sat
 distilled in `text/` the whole time.
 
+**Do not search for the name you expect.** A citation key is generated, not
+chosen, so it renders a name however the generator happened to render it:
+`CHAPERONg` is filed as `Yekeen2023Chaperon`, `Gmx_qk` as `Singh2023Gmx`. Grepping
+the tool name returns a confident zero for a paper that is sitting right there.
+Search by author, by DOI, and by `grep -rl text/` for the subject — and when a
+cross-check must match two lists, match on more than one key. A DOI diff against a
+manuscript bibliography reported five papers missing that the library held; their
+records simply carry no `doi` field.
+
+**Enumerate before concluding a negative.** Listing every entry on the subject and
+reading the list is a different operation from grepping a phrasing of the claim,
+and only the first one can support "nobody has done this." A phrasing search
+confirms; it never excludes. Before reporting a negative, name the single paper
+that would break it — and if that paper has not been opened, the negative is
+provisional and must be labeled as such. One that rested on an unfetched paper was
+overturned by that paper.
+
 **Read tables and figures off the rendered page.** `get_pdf.py <key>`, render the
 page, read the image. On a scanned or two-column paper the text layer interleaves
 columns, so a property table comes out as a plausible, correctly-formatted, wrong
 run of numbers. There is no way to tell from the text alone that it happened.
+
+**Derive a page offset before quoting a page number, and check it at both ends.**
+`<!-- p. N -->` markers are PDF pages, not journal pages, and the difference is
+invisible in the extract. Find the printed page number or running head on an early
+marker and a late one, and convert. Two papers in this library arrived as scans
+with an interlibrary-loan cover sheet, and the two cover sheets are different
+lengths — so the shift cannot be guessed, only measured. **Treat a filed scan's
+page 1 as suspect until the offset is derived**, and remember that some journals paginate by article
+number (`2040011-9`) and have no journal page to cite at all. A wrong locator
+travels further than a wrong quote, because nobody re-checks a page number that
+looks plausible.
 
 **Verify from the source, not from a search summary.** Summaries compress away
 the qualifications that matter, and attribute numbers to the wrong paper. A
@@ -50,6 +78,23 @@ mechanism that the proposed configuration switches off, and comparing a quantity
 that turned out to have been imposed by the build specification rather than
 emerging from the simulation. Ask what the run would have to show for you to be
 wrong, and confirm that outcome is reachable.
+
+**Validate a probe against a known positive before believing its zero.** A check
+that cannot fail is worse than no check, because its silence reads as good news.
+Real instances, all from one day: `grep -c '^deleting '` returned 0 on an rsync run
+that would have deleted 2505 files, because `-i` prints `*deleting`; a search for a
+journal DOI on page 1 returned 0 because that journal prints no DOI on page 1; a
+`| tail` on a failed run showed only its closing line. Before trusting a zero, run
+the probe against a case you know it should catch. Before trusting its hits, run it
+against one you know it should not.
+
+**Name the tools; do not claim the family.** A statement of the form "no tool in
+this class does X" is refuted by whichever one the reader happens to know, and the
+sample never gets big enough to be safe — one such claim here survived five papers,
+broke on the sixth, then broke again on the seventh, having twice been written into
+someone's manuscript in between. A sentence that names each tool and quotes it cannot be refuted
+by the next paper anyone opens, and it is shorter than the defense of the general
+version. This is a rule about the *shape* of the claim, not about sample size.
 
 **"The literature does not settle this" is a real answer**, and often the correct
 one. So is "I cannot fetch this" — say it plainly rather than working around a
