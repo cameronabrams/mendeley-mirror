@@ -112,6 +112,31 @@ def pdf_text(path: Path, pages: int = 2) -> str:
         return " ".join(doc[i].get_text() for i in range(min(pages, doc.page_count)))
 
 
+def has_content(path: Path, probe: int = 4) -> bool:
+    """Does this PDF actually carry anything -- text, an image, or vector marks?
+
+    A scan with no text layer is legitimate and must stay filable, so the file-name
+    path deliberately trusts a DOI in the name over the absence of text. That trust
+    has one hole: a delivery failure. An interlibrary-loan fetch can return a PDF
+    that is empty or all-blank, and named for its DOI it would sail through as
+    "unverified: no text" and become a reference with nothing behind it.
+
+    A real scan has page images. An empty delivery has no pages, or pages with
+    nothing drawn on them.
+    """
+    try:
+        with pymupdf.open(path) as doc:
+            if doc.page_count == 0:
+                return False
+            for i in range(min(probe, doc.page_count)):
+                page = doc[i]
+                if page.get_text().strip() or page.get_images() or page.get_drawings():
+                    return True
+        return False
+    except Exception:
+        return False        # unreadable is not "has content"
+
+
 def pdf_metadata_dois(path: Path) -> list[str]:
     out = []
     with pymupdf.open(path) as doc:
@@ -300,6 +325,10 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
                 # that is how a CD4 paper came back as RNA polymerase II. The name is
                 # the deliberate act; refuse rather than trust the text over it.
                 continue
+            if how == "file name" and len(front.strip()) < 200 and not has_content(path):
+                return None, "", ("this PDF has no text, no images and no marks on its first "
+                                  "pages -- it looks like an empty or failed download rather "
+                                  "than a scan. Nothing was filed; fetch it again.")
             if looks_right(meta, front) or (how == "file name" and len(front.strip()) < 200):
                 return meta, doi.lower(), how + (" (unverified: no text in the PDF)"
                                                  if not looks_right(meta, front) else "")

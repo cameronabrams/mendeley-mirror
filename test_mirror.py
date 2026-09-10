@@ -423,6 +423,32 @@ def main():
     check("Run ./run_mirror.sh" not in r and "a.pdf" in r,
           "a dry run reports what it could not identify but never says to refresh")
 
+    print("\ninbox: an empty download is not a scan")
+    import pymupdf as _fitz
+
+    # The file-name path deliberately trusts a DOI in the name over missing text,
+    # so a scan with no text layer stays filable. A failed interlibrary-loan fetch
+    # returns a PDF that is blank, and named for its DOI it would otherwise become
+    # a reference with nothing behind it.
+    blank = tmp / "blank.pdf"
+    d = _fitz.open(); d.new_page(); d.save(blank); d.close()
+    check(inbox.has_content(blank) is False, "a blank page is not content")
+
+    drawn = tmp / "drawn.pdf"
+    d = _fitz.open(); pg = d.new_page()
+    pg.draw_rect(_fitz.Rect(20, 20, 200, 200))          # marks but no text: a scan
+    d.save(drawn); d.close()
+    check(inbox.has_content(drawn) is True,
+          "a page with marks and no text IS content -- a real scan must stay filable")
+
+    texted = tmp / "texted.pdf"
+    d = _fitz.open(); pg = d.new_page(); pg.insert_text((72, 72), "hello")
+    d.save(texted); d.close()
+    check(inbox.has_content(texted) is True, "an ordinary text page is content")
+
+    check(inbox.has_content(tmp / "does-not-exist.pdf") is False,
+          "an unreadable file is not content, and does not raise")
+
     print("\ninbox: finding a reference the library already holds")
     ibx = tmp / "ibx"
     (ibx / ".mirror").mkdir(parents=True)
