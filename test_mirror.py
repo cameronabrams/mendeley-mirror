@@ -500,7 +500,7 @@ def main():
             {"pdbx_database_id_DOI": "10.1000/bulk", "year": 2010, "journal_abbrev": "J. Bulk"}},
         {"rcsb_id": "6FFF", "rcsb_primary_citation": {"pdbx_database_id_DOI": ""}},
     ]
-    HAVE = {"10.1000/held"}
+    HAVE = ({"10.1000/held"}, {"778899"}, {"a held title by name"})
     A2P = {"1AAA": {"p1"}, "2BBB": {"p1", "p2", "p3", "p4"},
            "3CCC": {"p9"}, "4DDD": {"p9"}, "5EEE": {"p9"}}
 
@@ -513,6 +513,17 @@ def main():
         [{"rcsb_id": "7GGG", "rcsb_primary_citation": {"pdbx_database_id_DOI": "10.1000/HELD"}}],
         HAVE, {})
     check(held2 == 1 and not ranked2, "DOI comparison is case-insensitive")
+
+    # 17% of this library's records carry no DOI, only a PMID. A DOI-only test
+    # reported Kwong 2000 as missing and it was downloaded a second time.
+    _, held3, _ = px.crossref([{"rcsb_id": "8HHH", "rcsb_primary_citation":
+        {"pdbx_database_id_DOI": "10.1000/unknown", "pdbx_database_id_PubMed": 778899}}], HAVE, {})
+    check(held3 == 1, "a PMID match counts as held when the DOI does not")
+    _, held4, _ = px.crossref([{"rcsb_id": "9III", "rcsb_primary_citation":
+        {"pdbx_database_id_DOI": "10.1000/unknown", "title": "A Held Title, By Name."}}], HAVE, {})
+    check(held4 == 1, "a normalized title match counts as held")
+    check(px.norm_title("A {Held} Title, By Name.") == "a held title by name",
+          "titles normalize past braces, case and punctuation")
 
     # The whole point: one paper wanted by four beats a bulk deposition wanted by one.
     check(ranked[0][0] == "10.1000/wanted",

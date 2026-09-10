@@ -59,7 +59,8 @@ except ImportError as exc:  # pragma: no cover
 API = "https://data.rcsb.org/graphql"
 UA = "mendeley-mirror pdbxref (mailto:cfa22@drexel.edu)"
 QUERY = ("{entries(entry_ids:[%s]){rcsb_id struct{title} "
-         "rcsb_primary_citation{pdbx_database_id_DOI title year journal_abbrev} "
+         "rcsb_primary_citation{pdbx_database_id_DOI pdbx_database_id_PubMed "
+         "title year journal_abbrev} "
          "rcsb_accession_info{status_code}}}")
 
 
@@ -68,27 +69,53 @@ def flat(s: str | None) -> str:
     return " ".join((s or "").split())
 
 
-def library_dois(out: Path) -> set[str]:
+def norm_title(s: str) -> str:
+    """A title reduced to something two sources can agree on."""
+    s = re.sub(r"\\[a-zA-Z]+|[{}$\\]", " ", s or "")
+    return " ".join(re.findall(r"[a-z0-9]+", s.lower()))
+
+
+def library_keys(out: Path) -> tuple[set[str], set[str], set[str]]:
+    """(dois, pmids, normalized titles) -- THREE keys, because one is not enough.
+
+    17% of this library's records carry no `doi` field: an older Mendeley import
+    often has a PMID and a PubMed URL instead. Matching on DOI alone reported
+    Kwong 2000 as a paper the library lacked, it was downloaded a second time, and
+    the extract had been on disk since August. RCSB publishes a PubMed ID beside
+    the DOI, and titles are the last resort -- so use all three.
+    """
     bib = (out / "library.bib").read_text(encoding="utf-8")
-    return {m.group(1).strip().lower()
+    dois = {m.group(1).strip().lower()
             for m in re.finditer(r"^\s*doi\s*=\s*\{(.*?)\}", bib, re.M)}
+    pmids = {m.group(1).strip()
+             for m in re.finditer(r"^\s*pmid\s*=\s*\{(\d+)\}", bib, re.M)}
+    titles = {norm_title(m.group(1))
+              for m in re.finditer(r"^\s*title\s*=\s*\{+(.*?)\}+,\s*$", bib, re.M | re.S)}
+    return dois, pmids, titles - {""}
 
 
-def crossref(entries: list[dict], have: set[str], acc2papers: dict[str, set[str]]):
+def crossref(entries: list[dict], have, acc2papers: dict[str, set[str]]):
     """(ranked gap, held, no_doi) -- pure, so the ranking is testable offline.
+
+    `have` is (dois, pmids, titles). A citation counts as held if ANY of the three
+    matches: a DOI-only test called Kwong 2000 missing because that record carries
+    a PMID instead, and it was downloaded twice as a result.
 
     RCSB returns DOIs in mixed case ("10.1126/SCIENCE.AAD2450"), so both sides are
     lowered before comparison; without that every Science structure looks missing.
     """
+    have_dois, have_pmids, have_titles = have
     gap: dict[str, dict] = {}
     held = no_doi = 0
     for e in entries:
         cit = (e or {}).get("rcsb_primary_citation") or {}
         doi = (cit.get("pdbx_database_id_DOI") or "").strip().lower()
+        pmid = str(cit.get("pdbx_database_id_PubMed") or "").strip()
+        ntitle = norm_title(cit.get("title"))
         if not doi:
             no_doi += 1
             continue
-        if doi in have:
+        if doi in have_dois or (pmid and pmid in have_pmids) or (ntitle and ntitle in have_titles):
             held += 1
             continue
         g = gap.setdefault(doi, {"year": cit.get("year"),
@@ -100,6 +127,23 @@ def crossref(entries: list[dict], have: set[str], acc2papers: dict[str, set[str]
         g["papers"] |= acc2papers.get(acc, set())
     ranked = sorted(gap.items(), key=lambda kv: (-len(kv[1]["papers"]), -len(kv[1]["ids"]), kv[0]))
     return ranked, held, no_doi
+
+
+def replay(path: Path) -> list[dict]:
+    """Rebuild citation records from a previous table, so no query is needed.
+
+    One row per PAPER in the table, one entry per STRUCTURE here -- crossref()
+    counts structures, so a three-structure paper must come back as three.
+    """
+    out: list[dict] = []
+    rows = [l for l in path.read_text(encoding="utf-8").splitlines() if not l.startswith("#")]
+    import csv as _csv
+    for r in _csv.DictReader(rows, delimiter="\t"):
+        cit = {"pdbx_database_id_DOI": r["doi"], "title": r["title"],
+               "year": r["year"], "journal_abbrev": r["journal"]}
+        for acc in r["structures"].split(","):
+            out.append({"rcsb_id": acc, "rcsb_primary_citation": dict(cit)})
+    return out
 
 
 def fetch(accs: list[str], batch: int = 60) -> tuple[list[dict], list[str]]:
@@ -134,7 +178,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Structures cited here whose papers are not held.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
     ap.add_argument("--min", type=int, default=1, help="only papers wanted by at least N library papers")
-    ap.add_argument("--tsv", type=Path, help="write the full table here")
+    ap.add_argument("--tsv", type=Path, help="write the full table here (default <out>/pdb-gap.tsv)")
+    ap.add_argument("--from-tsv", type=Path, nargs="?", const=True,
+                    help="re-filter a previous table against the CURRENT library, no network")
     ap.add_argument("--top", type=int, default=15, help="how many to print")
     args = ap.parse_args()
 
@@ -148,18 +194,37 @@ def main() -> int:
     if not accs:
         sys.exit("error: pdbrefs found no accessions -- is text/ populated?")
 
-    have = library_dois(out)
-    print(f"{len(accs)} accessions from {len(by_key)} papers; library holds {len(have)} DOIs",
-          file=sys.stderr)
-    entries, unresolved = fetch(accs)
+    have = library_keys(out)
+    print(f"{len(accs)} accessions from {len(by_key)} papers; library keys: "
+          f"{len(have[0])} DOIs, {len(have[1])} PMIDs, {len(have[2])} titles", file=sys.stderr)
+
+    if args.from_tsv:
+        # Re-filtering only needs the library, not RCSB. Filing a paper removes it
+        # from the gap, and that is a local fact -- so the page can be brought up to
+        # date after every filing without 830 network calls or any risk of drift.
+        cache = out / "pdb-gap.tsv" if args.from_tsv is True else args.from_tsv
+        entries = replay(cache)
+        unresolved = []
+        print(f"replayed {len(entries)} citations from {cache} (no network)", file=sys.stderr)
+    else:
+        entries, unresolved = fetch(accs)
     ranked, held, no_doi = crossref(entries, have, acc2papers)
 
     today = _dt.date.today().isoformat()
     print(f"\n# PDB cross-reference, {today}  (an entry is not frozen -- this is true today)")
-    print(f"resolved by RCSB        : {len(entries)}")
-    print(f"unrecognized accessions : {len(unresolved)}  <- obsolete, or pdbrefs false positives")
-    print(f"no primary-citation DOI : {no_doi}  <- invisible here, not absent")
-    print(f"primary citation held   : {held}")
+    if args.from_tsv:
+        # A replay sees only the previously-missing set, so these three counts are
+        # NOT MEASURED here. Printing 0 for them would be a zero that means
+        # "did not look", which reads exactly like a zero that means "none".
+        print(f"replayed citations      : {len(entries)}  (from cache; RCSB not queried)")
+        print("unrecognized accessions : not measured in replay")
+        print("no primary-citation DOI : not measured in replay")
+        print(f"newly held since cache  : {held}  <- papers filed since the last full run")
+    else:
+        print(f"resolved by RCSB        : {len(entries)}")
+        print(f"unrecognized accessions : {len(unresolved)}  <- obsolete, or pdbrefs false positives")
+        print(f"no primary-citation DOI : {no_doi}  <- invisible here, not absent")
+        print(f"primary citation held   : {held}")
     print(f"primary citation MISSING: {sum(len(g['ids']) for _, g in ranked)}"
           f" structures, {len(ranked)} distinct papers")
 
@@ -177,14 +242,15 @@ def main() -> int:
         print(f"    {g['title'][:96]}")
         print(f"    {doi}   {','.join(sorted(g['ids']))[:60]}")
 
-    if args.tsv:
-        with args.tsv.open("w", encoding="utf-8") as f:
+    tsv = args.tsv or (None if args.from_tsv else out / "pdb-gap.tsv")
+    if tsv:
+        with tsv.open("w", encoding="utf-8") as f:
             f.write(f"# generated {today}; PDB entries are versioned, this is true as of that date\n")
             f.write("library_papers\tn_structures\tdoi\tyear\tjournal\ttitle\tstructures\tciting_papers\n")
             for doi, g in ranked:
                 f.write(f"{len(g['papers'])}\t{len(g['ids'])}\t{doi}\t{g['year']}\t{g['journal']}\t"
                         f"{g['title']}\t{','.join(sorted(g['ids']))}\t{','.join(sorted(g['papers']))}\n")
-        print(f"\nfull table: {args.tsv}")
+        print(f"\nfull table: {tsv}")
     if unresolved:
         print(f"\nunrecognized by RCSB ({len(unresolved)}): {', '.join(sorted(unresolved))}")
     return 0

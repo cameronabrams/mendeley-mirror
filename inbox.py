@@ -179,15 +179,61 @@ def title_of(meta: dict) -> str:
     return meta.get("title", "")
 
 
+def stem_conflict(stem: str, doi: str) -> bool:
+    """True when the file name looks like it names a DIFFERENT DOI than `doi`.
+
+    Only fires when the stem is recognisably a DOI suffix -- "387527a0",
+    "science.1116480", "16.18.5572" -- so ordinary names like "kwong2000" or
+    "casino" never trigger it. Those stems are a deliberate statement about which
+    paper this is, and when the PDF's own text disagrees, the text is the thing to
+    doubt: a downloaded issue scan frequently begins on the tail of the preceding
+    article.
+    """
+    # Look for the digit run in the RAW name. Stripping separators first glues
+    # neighbours together -- "October 23  1995" becomes "231995" and invents a
+    # six-digit run in a perfectly ordinary publisher filename.
+    #
+    # FIVE consecutive digits, not four: a four-digit run is a YEAR, and names like
+    # "doyle1996" or "cowen-jacob2005" are how people actually save papers. Requiring
+    # four fired on twenty files in a forty-four file batch and refused most of them.
+    if not re.search(r"\d{5}", stem):
+        return False                      # not DOI-suffix-shaped; no opinion
+    st = re.sub(r"[^a-z0-9.]", "", stem.lower())
+    if len(st) < 6:
+        return False
+    tail = doi.lower().split("/", 1)[-1]
+    tail = re.sub(r"[^a-z0-9.]", "", tail)
+    return st not in tail and tail not in st
+
+
 def looks_right(msg: dict, page_text: str) -> bool:
-    """Does the paper this metadata describes actually match this PDF?"""
+    """Does the paper this metadata describes actually match this PDF?
+
+    Word overlap alone is not enough, and the failure is not hypothetical. A
+    Science reprint carries its issue's other titles in the related-content and
+    reference matter, so "Constraining Exoplanet Mass from Transmission
+    Spectroscopy" scored 83% against an HIV envelope paper -- every word present,
+    scattered, the phrase nowhere. Four papers in one batch were about to be filed
+    against unrelated references that way.
+
+    So a title must also appear as a PHRASE: some run of four consecutive title
+    words, in order, in the normalized text. A real title is printed on page one
+    and survives that; a bag of coincidental words does not. Short titles have no
+    four-word run and fall back to overlap alone.
+    """
     title = title_of(msg)
     if not title:
         return False
     tw = words(title)
     if not tw:
         return False
-    return len(tw & words(page_text)) / len(tw) >= 0.6
+    if len(tw & words(page_text)) / len(tw) < 0.6:
+        return False
+    seq = [w for w in re.findall(r"[a-z0-9]+", title.lower())]
+    if len(seq) < 4:
+        return True
+    hay = " ".join(re.findall(r"[a-z0-9]+", page_text.lower()))
+    return any(" ".join(seq[i:i + 4]) in hay for i in range(len(seq) - 3))
 
 
 def read_sidecar(path: Path) -> dict | None:
@@ -226,6 +272,12 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
         return None, "", f"cannot read the PDF ({exc})"
 
     tried: list[str] = []
+    # A 10.2210/pdb... DOI identifies a STRUCTURE DEPOSITION, not a paper, and its
+    # title mirrors the paper's closely enough to pass any similarity test. Two
+    # files in one batch resolved to the deposition instead of the article.
+    def usable(d: str) -> bool:
+        return not d.lower().startswith("10.2210/pdb")
+
     sources = [
         ("file name", filename_dois(path.name)),
         ("PDF metadata", pdf_metadata_dois(path)),
@@ -233,7 +285,7 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
     ]
     for how, cands in sources:
         for doi in cands:
-            if doi in tried:
+            if doi in tried or not usable(doi):
                 continue
             tried.append(doi)
             meta = resolve_doi(doi)
@@ -241,12 +293,21 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
                 continue
             # A DOI written into the file name is a deliberate act, so trust it
             # even when the PDF is a scan with no text to check it against.
+            if how != "file name" and stem_conflict(path.stem, doi):
+                # The file is named for one DOI and the text identifies another.
+                # A scanned journal issue often opens on the PREVIOUS article's last
+                # page, so the first text in the file belongs to a different paper --
+                # that is how a CD4 paper came back as RNA polymerase II. The name is
+                # the deliberate act; refuse rather than trust the text over it.
+                continue
             if looks_right(meta, front) or (how == "file name" and len(front.strip()) < 200):
                 return meta, doi.lower(), how + (" (unverified: no text in the PDF)"
                                                  if not looks_right(meta, front) else "")
 
     msg = crossref_search(page1)
-    if msg and looks_right(msg, front):
+    if msg and not usable(msg.get("doi", "")):
+        msg = None
+    if msg and looks_right(msg, front) and not stem_conflict(path.stem, msg.get("doi", "")):
         return msg, msg["doi"], "crossref title search"
 
     if tried:
@@ -433,6 +494,12 @@ def main() -> int:
         print(f"  - {path.name}")
         print(f"      {title_of(msg)[:90]}")
         print(f"      {doi}  ({how}; {where})")
+        if how.startswith("crossref title search"):
+            # This path asks Crossref live and does NOT reproduce: two files this week
+            # identified cleanly in every dry run and then failed on the real one,
+            # which breaks the promise that a dry run predicts what --yes will do.
+            print("      ! identified by live title search -- this may fail on the real run."
+                  " Rename it to its DOI first.")
         plan.append((path, msg, doi, doc_id, key))
 
     if not plan:
