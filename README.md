@@ -15,6 +15,8 @@ mendeley-mirror/               ← this repo, clone it where you like
 ├── mendeley_push.py       add one reference *to* Mendeley, from an arXiv ID or DOI
 ├── mendeley_edit.py       correct fields on references already in Mendeley
 ├── finding.py            record what was asked of a paper and where the answer is
+├── pdbrefs.py            which papers cite which PDB structures
+├── pdbxref.py            cited structures whose primary papers are missing
 ├── run_mirror.bat         double-click to refresh (Windows)
 ├── run_mirror.sh          ./run_mirror.sh (Linux/macOS)
 ├── install_schedule.bat   register/remove the hourly background refresh
@@ -270,6 +272,35 @@ Two properties do the real work:
 **A record locates a passage; it never substitutes for one.** Consulted instead of
 the extract it becomes a paraphrase indistinguishable from the source, which is what
 deterministic extraction exists to prevent. Every file says so in its own header.
+
+## Structures
+
+A fifth of the mirrored papers cite the Protein Data Bank, and the accessions are
+already in `text/`. `pdbrefs.py` reads them out; `pdbxref.py` asks RCSB what paper
+each one came from and checks it against `library.bib`.
+
+```
+uv run --script pdbrefs.py                 # 441 papers, 830 accessions, 1257 links
+uv run --script pdbrefs.py --id 4ZMJ       # who cites this structure
+uv run --script pdbxref.py --min 3         # structures wanted 3+ times, papers not held
+```
+
+An accession counts only when the surrounding text says it is one. Four characters —
+a digit then three alphanumerics — also describes `1997`, `3D` and half the equation
+labels in a physics paper, so matching the shape alone yields a long list that looks
+authoritative and is mostly noise. Requiring a cue also excludes accessions that
+appear only inside tables, where the text layer glues footnote markers onto the
+cells: Jo 2007's table gives `1SU44` and `2A654`, right structures and wrong strings.
+
+`pdbxref.py` ranks by **how many library papers reach for a structure**, not by how
+many structures share a paper — a bulk deposition otherwise outranks a paper the
+library actually leans on. In practice ~80% of the gap is wanted by a single paper,
+which usually means somebody borrowed coordinates.
+
+Two things to keep in mind. The output is a **prompt, not a want-list**: whether you
+need a paper or only its coordinates is a judgment about the science. And **a PDB
+entry is not frozen** — entries are re-refined, superseded and obsoleted, so an
+answer is true on the day it was asked, which is why the output carries a date.
 
 ## Correcting a reference already in Mendeley
 

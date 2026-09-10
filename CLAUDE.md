@@ -143,10 +143,19 @@ migration from the old credential-directory location.
 ## Entry points
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
-`get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`, and
-`finding.py` are separate CLIs that reuse its `Mendeley` client, `config_dir()`, and
-`DEFAULT_OUT`. `finding.py` is the only one that touches neither Mendeley nor the
-network — it writes to `<out>/findings/` and nowhere else. The `.bat`,
+`get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`,
+`finding.py`, `pdbrefs.py` and `pdbxref.py` are separate CLIs that reuse its
+`Mendeley` client, `config_dir()`, and `DEFAULT_OUT`. `finding.py` and `pdbrefs.py`
+touch neither Mendeley nor the network; `pdbxref.py` queries RCSB, which is public
+and unauthenticated, and never writes anything.
+
+**On structures.** The library's competence here is the *bridge* — which papers cite
+which structures, and whose primary papers are missing. It is not structural
+judgment: which structure to build, whether a model suits a purpose, calls about
+resolution, gaps or biological assembly. That belongs to `pestifer` and to the
+library's owner. And unlike a paper, **a PDB entry is not frozen** — it is
+re-refined, superseded and obsoleted — so a claim about a structure carries a date
+and has a shelf life a claim about a published page does not. The `.bat`,
 `.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and `run_mirror.bat`
 in step when either changes, and remember `refresh_quiet.bat` is the one the
 scheduled task runs, so it must never prompt or pause.

@@ -483,6 +483,50 @@ def main():
           f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
     (ibox / "junk.pdf").unlink()
 
+    print("\npdbxref.py: ranking the gap by demand, not by deposition size")
+    import pdbxref as px
+
+    ENTRIES = [
+        {"rcsb_id": "1AAA", "rcsb_primary_citation":
+            {"pdbx_database_id_DOI": "10.1000/HELD", "year": 2001, "journal_abbrev": "J. Held"}},
+        {"rcsb_id": "2BBB", "rcsb_primary_citation":
+            {"pdbx_database_id_DOI": "10.1000/wanted", "year": 2004, "journal_abbrev": "Neuron",
+             "title": "A title\nsplit over\tlines"}},
+        {"rcsb_id": "3CCC", "rcsb_primary_citation":
+            {"pdbx_database_id_DOI": "10.1000/bulk", "year": 2010, "journal_abbrev": "J. Bulk"}},
+        {"rcsb_id": "4DDD", "rcsb_primary_citation":
+            {"pdbx_database_id_DOI": "10.1000/bulk", "year": 2010, "journal_abbrev": "J. Bulk"}},
+        {"rcsb_id": "5EEE", "rcsb_primary_citation":
+            {"pdbx_database_id_DOI": "10.1000/bulk", "year": 2010, "journal_abbrev": "J. Bulk"}},
+        {"rcsb_id": "6FFF", "rcsb_primary_citation": {"pdbx_database_id_DOI": ""}},
+    ]
+    HAVE = {"10.1000/held"}
+    A2P = {"1AAA": {"p1"}, "2BBB": {"p1", "p2", "p3", "p4"},
+           "3CCC": {"p9"}, "4DDD": {"p9"}, "5EEE": {"p9"}}
+
+    ranked, held, no_doi = px.crossref(ENTRIES, HAVE, A2P)
+    check(held == 1, "a citation already in the library is not in the gap")
+    check(no_doi == 1, "an entry with no primary DOI is counted separately, not dropped silently")
+
+    # RCSB returns mixed-case DOIs; without lowering, every Science entry looks missing.
+    ranked2, held2, _ = px.crossref(
+        [{"rcsb_id": "7GGG", "rcsb_primary_citation": {"pdbx_database_id_DOI": "10.1000/HELD"}}],
+        HAVE, {})
+    check(held2 == 1 and not ranked2, "DOI comparison is case-insensitive")
+
+    # The whole point: one paper wanted by four beats a bulk deposition wanted by one.
+    check(ranked[0][0] == "10.1000/wanted",
+          f"ranked by citing papers, not by structure count (got {ranked[0][0]})")
+    check(len(ranked[0][1]["ids"]) == 1 and len(ranked[0][1]["papers"]) == 4,
+          "...even though the runner-up deposited three structures")
+    check(len(ranked[1][1]["ids"]) == 3 and len(ranked[1][1]["papers"]) == 1,
+          "the bulk deposition is grouped as one paper, ranked below")
+
+    check(px.flat("A title\nsplit over\tlines") == "A title split over lines",
+          "titles are flattened -- a newline in a title corrupted a TSV once")
+    check(ranked[0][1]["title"] == "A title split over lines",
+          "and crossref flattens them on the way in")
+
     print("\npdbrefs.py: an accession counts only when the text says it is one")
     import pdbrefs as pr
 
