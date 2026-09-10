@@ -155,10 +155,11 @@ judgment: which structure to build, whether a model suits a purpose, calls about
 resolution, gaps or biological assembly. That belongs to `pestifer` and to the
 library's owner. And unlike a paper, **a PDB entry is not frozen** — it is
 re-refined, superseded and obsoleted — so a claim about a structure carries a date
-and has a shelf life a claim about a published page does not. The `.bat`,
-`.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and `run_mirror.bat`
-in step when either changes, and remember `refresh_quiet.bat` is the one the
-scheduled task runs, so it must never prompt or pause.
+and has a shelf life a claim about a published page does not.
+
+The `.bat`, `.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and
+`run_mirror.bat` in step when either changes, and remember `refresh_quiet.bat` is
+the one the scheduled task runs, so it must never prompt or pause.
 
 ## Direction of travel
 
