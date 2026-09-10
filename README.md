@@ -14,6 +14,7 @@ mendeley-mirror/               ← this repo, clone it where you like
 ├── inbox.py               file PDFs you saved into inbox/ back into Mendeley
 ├── mendeley_push.py       add one reference *to* Mendeley, from an arXiv ID or DOI
 ├── mendeley_edit.py       correct fields on references already in Mendeley
+├── finding.py            record what was asked of a paper and where the answer is
 ├── run_mirror.bat         double-click to refresh (Windows)
 ├── run_mirror.sh          ./run_mirror.sh (Linux/macOS)
 ├── install_schedule.bat   register/remove the hourly background refresh
@@ -24,6 +25,12 @@ mendeley-mirror/               ← this repo, clone it where you like
 The mirror itself is everything the script writes. It defaults to
 `~/Sync/mendeley` (`%USERPROFILE%\Sync\mendeley` on Windows); `--out` sends it
 anywhere else. Every file in it is generated — edit in Mendeley, not here.
+
+**One exception, added deliberately: `findings/`.** It is the only hand-written
+directory in the mirror, it is never touched by a refresh, and it holds the record
+of what was asked of a paper and where the answer sat. It lives here rather than
+outside so it syncs to every machine and greps beside `text/` — a record that is
+machine-local is a record nobody else can check. See "Findings" below.
 
 ```
 Sync/mendeley/                 ← the library, and only the library
@@ -228,6 +235,41 @@ so for an Advance Access paper it is a year early. Both writers prefer
 `published-print`, falling back to `issued` only for work that was never printed —
 a preprint, a data set, a born-digital journal. arXiv preprints go in
 as `type: journal` with `source: arXiv`, because Mendeley has no preprint type.
+
+## Findings: what was asked, and where the answer was
+
+The mirror preserves what a paper *says*. `finding.py` preserves what was *asked* of
+it, so a question answered once is not re-derived from nothing six months later.
+
+```
+uv run --script finding.py --key Jo2007Automated \
+    --question "does it optimize the protein's embedding?" \
+    --page 2 --asked-by pestifer-manuscript \
+    --quote "one should align it in a local machine and then upload it"
+```
+
+Records land in `findings/<citekey>.md`, one file per paper, **append-only**. A
+finding later found wrong gets a `RETRACTED` record pointing at it and the original
+stays, so how long a wrong claim stood is visible rather than tidied away. A
+`CHECKED` record is likewise appended, carrying who checked and when — which makes
+"what fraction of these has anyone verified?" a question with an answer.
+
+Two properties do the real work:
+
+- **The quote is verified before the record is written.** It must actually appear in
+  `text/<citekey>.md` under the marker page claimed for it, after Unicode and
+  whitespace normalization. A quote that cannot be found is refused, not filed with a
+  warning. If it turns up on a different page, the error says which.
+- **The page offset is derived, never trusted.** `finding.py` reads the recurring
+  page number out of each page's running head or footer and takes the offset a
+  majority of pages agree on. On fourteen papers whose offsets had been worked out by
+  hand it got thirteen right and refused the fourteenth — a two-page note with no
+  usable footer. It has never returned a wrong offset, which is the property that
+  matters: a refusal costs a minute, a wrong locator ships.
+
+**A record locates a passage; it never substitutes for one.** Consulted instead of
+the extract it becomes a paraphrase indistinguishable from the source, which is what
+deterministic extraction exists to prevent. Every file says so in its own header.
 
 ## Correcting a reference already in Mendeley
 

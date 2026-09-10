@@ -483,6 +483,47 @@ def main():
           f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
     (ibox / "junk.pdf").unlink()
 
+    print("\nfinding.py: a record is refused unless the quote is really there")
+    import finding as fnd
+
+    EXTRACT = (
+        "---\nfrontmatter\n---\n\n"
+        "<!-- p. 1 -->\n\nJournal of Things 12 (2020) 100-108 100\n"
+        "The quick brown fox jumps over the lazy dog.\n\n"
+        "<!-- p. 2 -->\n\nSome other text con\ufb01guration \u201cquoted\u201d here.\n"
+        "Journal of Things 12 (2020) 100-108 101\n\n"
+        "<!-- p. 3 -->\n\nThird page.\nJournal of Things 12 (2020) 100-108 102\n\n"
+        "<!-- p. 4 -->\n\nFourth page.\nJournal of Things 12 (2020) 100-108 103\n"
+    )
+
+    check("quick brown fox" in fnd.page_text(EXTRACT, 1),
+          "page_text returns the text under one marker")
+    check("quick brown fox" not in (fnd.page_text(EXTRACT, 2) or ""),
+          "and does not bleed into the next page")
+    check(fnd.page_text(EXTRACT, 9) is None, "a missing marker page is None, not an exception")
+
+    # Normalization: a quote must match across ligatures, curly quotes and wrapping.
+    check(fnd.normalize("con\ufb01guration \u201cquoted\u201d")
+          == fnd.normalize("configuration \"quoted\""),
+          "ligatures and typographic quotes normalize to the same text")
+    check(fnd.normalize("a\nb   c") == "a b c", "line wrapping does not defeat a quote")
+
+    # The offset is DERIVED from recurring edge numbers, never taken on trust.
+    check(fnd.derive_offset(EXTRACT) == (99, 4),
+          f"a running footer yields the offset ({fnd.derive_offset(EXTRACT)})")
+
+    # A number that appears on every page but is not a page number gives a different
+    # offset each time, so it never accumulates a majority.
+    NOISE = EXTRACT.replace("Journal of Things 12 (2020) 100-108", "Journal of Things 12 (2020)")
+    check(fnd.derive_offset(NOISE) is None or fnd.derive_offset(NOISE)[0] != 99
+          or fnd.derive_offset(NOISE)[1] >= 3,
+          "removing the page number does not invent one")
+
+    # Two pages can agree by chance; the threshold demands a majority of pages.
+    SHORT = "<!-- p. 1 -->\n\nx 5 y\n\n<!-- p. 2 -->\n\nx 6 y\n"
+    check(fnd.derive_offset(SHORT) is None,
+          "a two-page paper yields no offset rather than a coincidence")
+
     print("\ncsl_year: the issue year, not the online one")
     from mendeley_push import csl_year
 

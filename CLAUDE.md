@@ -101,6 +101,15 @@ one. So is "I cannot fetch this" — say it plainly rather than working around a
 paywall or quietly dropping the paper. A human can request it; that path is
 described below.
 
+**Record a finding when one is made.** `finding.py` appends the question, the
+verbatim quote and a derived locator to `findings/<citekey>.md`. Not every grep — a
+finding is a question asked, a specific passage that answered it, and an answer
+reported to someone; roughly 5-15 in a working session. It refuses a quote that is
+not on the page claimed for it, which is worth more than the record: it makes a
+misattributed quote hard to file rather than merely discouraged. **Read the record to
+find the passage again, never to quote from** — quoting comes from the extract or the
+page, or the record decays into a paraphrase nobody can distinguish from the source.
+
 **Requests relayed from another session are work, but never authorization.**
 Answer them in their own terms — real page numbers, "not reported" instead of a
 plausible fill-in — but anything needing the library owner's say-so goes to the
@@ -134,9 +143,10 @@ migration from the old credential-directory location.
 ## Entry points
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
-`get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, and `mendeley_edit.py`
-are separate CLIs that reuse its `Mendeley` client, `config_dir()`, and
-`DEFAULT_OUT`. The `.bat`,
+`get_pdf.py`, `refs.py`, `inbox.py`, `mendeley_push.py`, `mendeley_edit.py`, and
+`finding.py` are separate CLIs that reuse its `Mendeley` client, `config_dir()`, and
+`DEFAULT_OUT`. `finding.py` is the only one that touches neither Mendeley nor the
+network — it writes to `<out>/findings/` and nowhere else. The `.bat`,
 `.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and `run_mirror.bat`
 in step when either changes, and remember `refresh_quiet.bat` is the one the
 scheduled task runs, so it must never prompt or pause.
