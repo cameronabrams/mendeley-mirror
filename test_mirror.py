@@ -483,6 +483,39 @@ def main():
           f"the problem survives a tail -3 (tail was: {tail3[:80]!r})")
     (ibox / "junk.pdf").unlink()
 
+    print("\npdbrefs.py: an accession counts only when the text says it is one")
+    import pdbrefs as pr
+
+    got = pr.accessions_in("structures were taken from PDB ID 1ABC and PDB code: 2DEF.")
+    check(set(got) == {"1ABC", "2DEF"}, f"the common cue forms are read ({sorted(got)})")
+
+    # Papers gloss each entry as they list it; without stepping over the
+    # parentheses the list ends at the first gloss.
+    got = pr.accessions_in("such as PDB:1H2S (sensory rhodopsin II), 2A65 (a transporter), 1SU4 (an ATPase)")
+    check(set(got) == {"1H2S", "2A65", "1SU4"},
+          f"a glossed list keeps going past the first parenthetical ({sorted(got)})")
+
+    # The trap that put a piece of software in the library's top ten structures.
+    check(pr.accessions_in("prepared with PDB2PQR and pdb2gmx") == {},
+          "an accession glued inside a word is not an accession")
+    check(pr.accessions_in("prepared with PDB 2PQR59,60 as described") == {},
+          "...nor when extraction splits that word with a space")
+
+    # Shape alone matches years, and a bibliography is full of them.
+    check(pr.accessions_in("Protein Data Bank, 1997, and see PDB 2001") == {},
+          "years are not accessions even after a cue")
+
+    # No cue, no accession -- which is what keeps mangled table cells out.
+    check(pr.accessions_in("1SU44 rect 452 62,760 2A654 hexa 386") == {},
+          "bare four-character tokens in a table are ignored")
+
+    got = pr.accessions_in("deposited in the Protein Data Bank under accession code 6VXX")
+    check(set(got) == {"6VXX"}, f"the deposition sentence form is read ({sorted(got)})")
+    got = pr.accessions_in("see https://www.rcsb.org/structure/5FUU for details")
+    check(set(got) == {"5FUU"}, f"an rcsb.org URL is read ({sorted(got)})")
+
+    check(pr.accessions_in("PDB ID 1abc")["1ABC"] == 1, "accessions are normalized to upper case")
+
     print("\nfinding.py: a record is refused unless the quote is really there")
     import finding as fnd
 
