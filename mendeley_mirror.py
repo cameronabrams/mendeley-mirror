@@ -781,21 +781,78 @@ def annotation_markdown(doc: dict, key: str, annotations: list) -> str:
 # yields a handful of stray marks, if that.
 MIN_CHARS_PER_PAGE = 80
 
+# How much of a document's pages a line must appear on to be boilerplate rather
+# than content. A running head or a library stamp is on all of them; a sentence
+# is on one.
+BOILERPLATE_SHARE = 0.6
 
-def extract_pdf_text(data: bytes) -> tuple[str, int, int]:
-    """Return (markdown body, page count, character count) for a PDF's bytes."""
+
+def content_chars(page_texts: list[str]) -> int:
+    """Characters left once lines repeated across most pages are discarded.
+
+    Counting raw characters cannot tell a paper from a scan of a paper. A
+    ProQuest copy of Lin & Rye 2006 carried *exactly* 103 characters on every
+    one of its 29 pages -- the same "Reproduced with permission of the copyright
+    owner" stamp, one image, and nothing else. That is 1.3x MIN_CHARS_PER_PAGE,
+    so a per-page character count calls it a text layer and the paper stops
+    being reported as unreadable. A silent gap is worse than a known one,
+    because a search over text/ then returns a confident zero for it.
+
+    So measure what is left after removing the lines that repeat: for the stamped
+    scan that is nothing, while a real paper loses only its running head.
+
+    Takes the *raw* page text, before clean_page_text. That ordering is
+    load-bearing: cleaning joins a line to the next one when the break is not
+    after sentence punctuation, so a running head ending in ")" is spliced onto
+    the first sentence of the body and stops being a repeated line at all.
+    Boilerplate has to be found while the lines are still lines.
+
+    Short documents are exempt -- across one or two pages "repeated on most
+    pages" means nothing, and a two-page paper whose header matches its footer
+    should not be judged on it.
+    """
+    pages = [t.strip() for t in page_texts]
+    if len(pages) < 3:
+        return sum(len(t) for t in pages)
+
+    seen: dict[str, int] = {}
+    for text in pages:
+        for line in {" ".join(x.split()).casefold()
+                     for x in text.splitlines() if x.strip()}:
+            seen[line] = seen.get(line, 0) + 1
+    # max(3, ...) so a 3-page document needs unanimity, not a 2-of-3 accident
+    threshold = max(3, int(len(pages) * BOILERPLATE_SHARE))
+    boilerplate = {line for line, n in seen.items() if n >= threshold}
+    if not boilerplate:
+        return sum(len(t) for t in pages)
+
+    total = 0
+    for text in pages:
+        kept = [x for x in text.splitlines()
+                if " ".join(x.split()).casefold() not in boilerplate]
+        total += len("\n".join(kept).strip())
+    return total
+
+
+def extract_pdf_text(data: bytes) -> tuple[str, int, int, int]:
+    """Return (markdown body, page count, character count, content characters).
+
+    The body keeps every character; only the *decision* about whether this is a
+    text layer uses the boilerplate-stripped count.
+    """
     import pymupdf  # imported lazily so --attachments none needs no PDF stack
 
-    chunks, chars = [], 0
+    chunks, chars, raw_pages = [], 0, []
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         pages = doc.page_count
         for n, page in enumerate(doc, 1):
-            text = page.get_text("text") or ""
-            text = clean_page_text(text)
+            raw = page.get_text("text") or ""
+            raw_pages.append(raw)
+            text = clean_page_text(raw)
             chars += len(text.strip())
             if text.strip():
                 chunks.append(f"<!-- p. {n} -->\n\n{text.strip()}")
-    return "\n\n".join(chunks), pages, chars
+    return "\n\n".join(chunks), pages, chars, content_chars(raw_pages)
 
 
 def clean_page_text(text: str) -> str:
@@ -931,10 +988,12 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         known[f["id"]] = {"filehash": f.get("filehash"), "status": "not-pdf"}
                         continue
 
-                    body, pages, chars = extract_pdf_text(data)
-                    if chars < MIN_CHARS_PER_PAGE * max(pages, 1):
+                    body, pages, chars, content = extract_pdf_text(data)
+                    if content < MIN_CHARS_PER_PAGE * max(pages, 1):
                         status = "no-text"
                         detail = f"{chars} characters across {pages} pages"
+                        if content < chars:
+                            detail += f", {content} once page-repeated lines are dropped"
                         report.append({"key": stem, "status": status,
                                        "title": doc.get("title", ""), "detail": detail})
                         text_target.unlink(missing_ok=True)

@@ -206,7 +206,7 @@ def main():
     pdf_bytes = doc.tobytes()
     doc.close()
 
-    body, pages, chars = mm.extract_pdf_text(pdf_bytes)
+    body, pages, chars, content = mm.extract_pdf_text(pdf_bytes)
     check(pages == 2, f"page count read ({pages})")
     check("<!-- p. 1 -->" in body and "<!-- p. 2 -->" in body, "page markers emitted")
     check("catalysis efficiency" in body, "hyphenation across a line break repaired")
@@ -214,10 +214,47 @@ def main():
 
     scan = pymupdf.open()
     scan.new_page()  # a page with no text layer, as a scan would be
-    empty_body, empty_pages, empty_chars = mm.extract_pdf_text(scan.tobytes())
+    empty_body, empty_pages, empty_chars, empty_content = mm.extract_pdf_text(scan.tobytes())
     scan.close()
     check(empty_chars < mm.MIN_CHARS_PER_PAGE * max(empty_pages, 1),
           f"textless page falls under the scan threshold ({empty_chars} chars)")
+
+    # A scan whose only text is a stamp repeated on every page. Real case: a
+    # ProQuest copy of Lin & Rye 2006 carried exactly 103 characters on each of
+    # 29 pages, above MIN_CHARS_PER_PAGE, so the raw count called it readable.
+    stamp = ("Reproduced with permission of the copyright owner.  "
+             "Further reproduction prohibited without permission.")
+    stamped = pymupdf.open()
+    for _ in range(29):
+        page = stamped.new_page()
+        page.insert_text((72, 72), stamp, fontsize=9)
+    st_body, st_pages, st_chars, st_content = mm.extract_pdf_text(stamped.tobytes())
+    stamped.close()
+    check(st_chars >= mm.MIN_CHARS_PER_PAGE * st_pages,
+          f"stamped scan clears the raw threshold, as the real one did ({st_chars})")
+    check(st_content == 0, f"stamp is recognised as boilerplate, not content ({st_content})")
+
+    # The same logic must not strip a real paper down: a running head repeats on
+    # every page too, and removing it should leave the body untouched.
+    real = pymupdf.open()
+    for n in range(6):
+        page = real.new_page()
+        page.insert_text((72, 50), "J. Chem. Phys. 152, 044105 (2020)", fontsize=8)
+        page.insert_textbox(pymupdf.Rect(72, 90, 420, 700),
+                            (f"Section {n} discusses the integrator in detail. " * 12),
+                            fontsize=9)
+    r_body, r_pages, r_chars, r_content = mm.extract_pdf_text(real.tobytes())
+    real.close()
+    check(r_content > mm.MIN_CHARS_PER_PAGE * r_pages,
+          f"paper with a running head stays readable ({r_content} content chars)")
+    check(r_content < r_chars, "the running head itself was discounted")
+
+    # Short documents are exempt: across one or two pages "repeated on most
+    # pages" is meaningless, and a note should not be judged on it.
+    two = ["Identical text on both pages."] * 2
+    check(mm.content_chars(two) == sum(len(t) for t in two),
+          "two-page document is not subjected to the repeat test")
+    check(mm.content_chars([]) == 0, "no pages means no content")
 
     md = mm.text_document(DOCS[0], "Muller2020Yield", body, pages, chars)
     check(md.startswith("---\ncitekey: Muller2020Yield"), "front matter leads the file")
