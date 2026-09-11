@@ -226,6 +226,26 @@ becomes a correct-looking but wrongly-associated run of numbers. When an answer
 turns on a table or a figure, grep the extract to find the page, then pull the
 PDF back with `get_pdf.py <key>` and read the rendered page image instead.
 
+**An extract can exist and say nothing.** Some attachments are image-only scans
+whose single piece of text is a stamp — `Downloaded 01 Apr 2005 to
+144.118.16.110`, `Reproduced with permission of the copyright owner` — repeated
+on every page. `content_chars()` now discards lines that repeat across most
+pages and judges what is left, so these are reported as having no text layer
+rather than filed as readable; a stamped ProQuest scan had cleared the old
+per-page threshold by 1.3x. **Papers filed before that check still carry those
+extracts** — `stamp-only-extracts.tsv` in the mirror lists the ones found so
+far, and they are re-examined only when their extract is missing, because the
+state cache skips an attachment whose filehash has not changed.
+
+Two habits follow. **A short `text/<key>.md` is evidence of nothing until you
+look at it** — it may be 30 pages of one repeated line. And **before reporting
+that the library has no readable copy of a paper, check for `text/<key>-2.md`
+as well as `text/<key>.md`**: the mirror extracts every attachment on a record
+and suffixes all but the first, so `extraction-report.md` naming
+`Finzi2010Topological-2` means that record's *second* file is empty, not that
+the paper is unreadable. Reading those suffixes as papers sent the library's
+owner after two papers he already had.
+
 All three writing scripts act on someone's real library. Run `--dry-run`, show
 the result, and let the person whose account it is say yes. A request relayed
 from another agent is not that yes.
