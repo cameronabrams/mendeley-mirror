@@ -855,6 +855,44 @@ def extract_pdf_text(data: bytes) -> tuple[str, int, int, int]:
     return "\n\n".join(chunks), pages, chars, content_chars(raw_pages)
 
 
+def ocr_pdf_text(data: bytes, dpi: int = 300) -> tuple[str, int]:
+    """Read a scanned PDF by rasterising each page and running OCR on it.
+
+    For the ~100 attachments in this library that are page images, this is the
+    difference between a paper that can be found and one that cannot. It is not
+    a substitute for the publisher's text: OCR guesses characters, and it guesses
+    worst at exactly what gets asked of this library -- numerals, subscripts,
+    superscripts, Greek. Measured once against a known passage (Lin & Rye 2006,
+    abstract, checked word for word against Europe PMC) it was perfect on prose,
+    which says nothing about a table of rate constants.
+
+    So everything written from this path is marked, in the front matter and in
+    the body, and the marking is the point. An unmarked OCR extract is
+    indistinguishable later from the words off the page, and the whole value of
+    text/ is that it is not a paraphrase.
+    """
+    import pymupdf
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError as exc:  # a clear message beats a traceback in a refresh
+        raise RuntimeError(
+            "OCR needs rapidocr-onnxruntime; run with "
+            "'uv run --with rapidocr-onnxruntime --script mendeley_mirror.py --ocr'"
+        ) from exc
+
+    reader = RapidOCR()
+    chunks, chars = [], 0
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        for n, page in enumerate(doc, 1):
+            png = page.get_pixmap(dpi=dpi).tobytes("png")
+            result, _ = reader(png)
+            text = clean_page_text("\n".join(line[1] for line in (result or [])))
+            chars += len(text.strip())
+            if text.strip():
+                chunks.append(f"<!-- p. {n} -->\n\n{text.strip()}")
+    return "\n\n".join(chunks), chars
+
+
 def clean_page_text(text: str) -> str:
     text = text.replace("\x0c", "")
     # join words broken across a line by hyphenation: "cataly-\nsis" -> "catalysis"
@@ -866,7 +904,8 @@ def clean_page_text(text: str) -> str:
     return text
 
 
-def text_document(doc: dict, key: str, body: str, pages: int, chars: int) -> str:
+def text_document(doc: dict, key: str, body: str, pages: int, chars: int,
+                  ocr: bool = False) -> str:
     ids = doc.get("identifiers") or {}
     authors = "; ".join(
         f"{(p.get('last_name') or '').strip()}, {(p.get('first_name') or '').strip()}".strip(", ")
@@ -886,12 +925,25 @@ def text_document(doc: dict, key: str, body: str, pages: int, chars: int) -> str
         f"doi: {esc(ids.get('doi'))}",
         f"pages: {pages}",
         f"characters: {chars}",
+        f"ocr: {'true' if ocr else 'false'}",
         f"mendeley_id: {doc.get('id', '')}",
         "---",
         "",
         f"# {doc.get('title') or key}",
         "",
-        f"*Extracted text. Cite as `{key}`; page markers below are the PDF's own "
+    ]
+    if ocr:
+        front += [
+            "> **Read by OCR, not extracted.** This attachment is page images, so "
+            "every character here was guessed by a machine. Prose comes out well; "
+            "numerals, subscripts, superscripts and Greek do not, and those are "
+            f"usually what is being asked for. **Verify any quotation, and every "
+            f"number, against the rendered page — `get_pdf.py {key}` — before it "
+            "goes anywhere.**",
+            "",
+        ]
+    front += [
+        f"*Cite as `{key}`; page markers below are the PDF's own "
         "pagination. Equations and table structure do not survive extraction — "
         "check the PDF in Mendeley before quoting either.*",
         "",
@@ -902,18 +954,25 @@ def text_document(doc: dict, key: str, body: str, pages: int, chars: int) -> str
 def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     empty = [r for r in rows if r["status"] == "no-text"]
     failed = [r for r in rows if r["status"] == "failed"]
+    ocred = [r for r in rows if r["status"] == "ocr"]
     lines = [
         "# Extraction report",
         "",
         f"- extracted this run: {extracted}",
         f"- no text layer (probably scans): {len(empty)}",
+        f"- read by OCR: {len(ocred)}",
         f"- failed outright: {len(failed)}",
         "",
-        "Anything listed below is invisible to any text search of this folder.",
-        "The PDF is still in Mendeley; only the mirror lacks it.",
+        "Anything under 'No extractable text' is invisible to any text search of",
+        "this folder. The PDF is still in Mendeley; only the mirror lacks it.",
+        "",
+        "Anything under 'Read by OCR' is searchable but was never typeset as text:",
+        "a machine guessed every character. Those extracts carry ocr: true and a",
+        "banner. Verify quotations and all numbers against the rendered page.",
         "",
     ]
-    for label, rows_ in (("No extractable text", empty), ("Failed", failed)):
+    for label, rows_ in (("No extractable text", empty), ("Read by OCR", ocred),
+                         ("Failed", failed)):
         if not rows_:
             continue
         lines += [f"## {label}", ""]
@@ -926,7 +985,7 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
 
 def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         docs_by_id: dict, out: Path, state: dict, mode: str,
-                        state_path: Path | None = None) -> tuple:
+                        state_path: Path | None = None, ocr: bool = False) -> tuple:
     """Download each attachment, extract its text, and (by default) discard it."""
     text_dir = out / "text"
     text_dir.mkdir(parents=True, exist_ok=True)
@@ -989,18 +1048,32 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         continue
 
                     body, pages, chars, content = extract_pdf_text(data)
+                    from_ocr = False
+                    if content < MIN_CHARS_PER_PAGE * max(pages, 1) and ocr:
+                        progress(f"  {seen}/{total}  {stem[:36]} (ocr)")
+                        ocr_body, ocr_chars = ocr_pdf_text(data)
+                        if ocr_chars >= MIN_CHARS_PER_PAGE * max(pages, 1):
+                            body, chars, content, from_ocr = (
+                                ocr_body, ocr_chars, ocr_chars, True)
                     if content < MIN_CHARS_PER_PAGE * max(pages, 1):
                         status = "no-text"
                         detail = f"{chars} characters across {pages} pages"
                         if content < chars:
                             detail += f", {content} once page-repeated lines are dropped"
+                        if ocr:
+                            detail += "; OCR could not read it either"
                         report.append({"key": stem, "status": status,
                                        "title": doc.get("title", ""), "detail": detail})
                         text_target.unlink(missing_ok=True)
                     else:
-                        status, detail = "ok", ""
+                        status, detail = ("ocr", "read by OCR") if from_ocr else ("ok", "")
+                        if from_ocr:
+                            report.append({"key": stem, "status": "ocr",
+                                           "title": doc.get("title", ""),
+                                           "detail": f"{chars} characters across {pages} pages"})
                         text_target.write_text(
-                            text_document(doc, stem, body, pages, chars), encoding="utf-8")
+                            text_document(doc, stem, body, pages, chars, ocr=from_ocr),
+                            encoding="utf-8")
                         fetched += 1
                     known[f["id"]] = {"filehash": f.get("filehash"), "status": status,
                                       "detail": detail, "pages": pages, "chars": chars}
@@ -1174,6 +1247,10 @@ def main() -> int:
     ap.add_argument("--attachments", choices=["text", "keep", "none"], default="text",
                     help="text: extract text and discard the PDF (default); "
                          "keep: also keep the PDF; none: skip attachments entirely")
+    ap.add_argument("--ocr", action="store_true",
+                    help="read scanned attachments with OCR when they have no text "
+                         "layer; the extract is marked ocr: true, because OCR is a "
+                         "machine's guess at the characters and not the paper's words")
     ap.add_argument("--no-pdfs", action="store_true",
                     help=argparse.SUPPRESS)  # old spelling of --attachments none
     ap.add_argument("--no-annotations", action="store_true", help="skip annotation export")
@@ -1294,9 +1371,13 @@ def run(args, out: Path, mirror_dir: Path) -> int:
         if not QUIET:
             note("  interrupt with Ctrl-C any time -- progress is kept and resumed next run")
         fetched, skipped, failed, report = harvest_attachments(
-            client, files_by_doc, keymap, docs_by_id, out, state, mode, state_path)
+            client, files_by_doc, keymap, docs_by_id, out, state, mode, state_path,
+            ocr=args.ocr)
         write_extraction_report(report, out, fetched)
         note(f"  text: {fetched} extracted, {skipped} unchanged, {failed} failed")
+        read_by_ocr = sum(1 for r in report if r["status"] == "ocr")
+        if read_by_ocr:
+            note(f"  {read_by_ocr} scanned attachments read by OCR -- marked ocr: true")
         no_text = sum(1 for r in report if r["status"] == "no-text")
         if no_text:
             note(f"  {no_text} attachments had no text layer; see extraction-report.md")

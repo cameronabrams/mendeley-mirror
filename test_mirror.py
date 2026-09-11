@@ -256,7 +256,18 @@ def main():
           "two-page document is not subjected to the repeat test")
     check(mm.content_chars([]) == 0, "no pages means no content")
 
+    # OCR provenance must be legible in the file itself. An unmarked OCR extract
+    # is indistinguishable later from the words off the page, and that confusion
+    # is the whole thing text/ exists to prevent.
+    ocr_md = mm.text_document(DOCS[0], "Muller2020Yield", body, pages, chars, ocr=True)
+    check("ocr: true" in ocr_md, "OCR extract declares itself in the front matter")
+    check("Read by OCR, not extracted" in ocr_md, "OCR extract carries a visible banner")
+    check("get_pdf.py Muller2020Yield" in ocr_md,
+          "banner names the command that shows the rendered page")
+
     md = mm.text_document(DOCS[0], "Muller2020Yield", body, pages, chars)
+    check("ocr: false" in md, "an ordinary extract says so rather than staying silent")
+    check("Read by OCR" not in md, "no OCR banner on a real text layer")
     check(md.startswith("---\ncitekey: Muller2020Yield"), "front matter leads the file")
     check('doi: "10.1002/aic.16789"' in md, "doi in front matter for citation")
     check("Equations and table structure do not survive" in md,
