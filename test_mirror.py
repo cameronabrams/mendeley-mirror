@@ -302,6 +302,25 @@ def main():
     check(not (h_out / "pdf").exists(), "empty pdf/ directory cleaned up")
     check(st["files"]["x1"]["status"] == "ok", "state records the extraction")
 
+    # An OCR'd attachment is skipped on every later refresh, because its extract
+    # exists. It must still be listed under "Read by OCR" -- on 11 Sep the first
+    # hourly refresh after the OCR run emptied that section for all 108 papers,
+    # because the skip branch only re-listed no-text and failed entries.
+    st["files"]["x1"].update(status="ocr", detail="read by OCR", pages=2, chars=1234)
+    fetched, skipped, failed, rep_rows = mm.harvest_attachments(
+        NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+        {"d1": "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
+    check(skipped == 1 and fetched == 0, "an OCR'd attachment is not re-read on a plain refresh")
+    ocr_rows = [r for r in rep_rows if r["status"] == "ocr"]
+    check(len(ocr_rows) == 1 and ocr_rows[0]["key"] == "Muller2020Yield",
+          "a skipped OCR'd attachment stays in the report")
+    check(ocr_rows and ocr_rows[0]["detail"] == "1234 characters across 2 pages",
+          "its detail matches what the OCR run itself reported")
+    mm.write_extraction_report(rep_rows, h_out, extracted=0)
+    h_rep = (h_out / "extraction-report.md").read_text(encoding="utf-8")
+    check("read by OCR: 1" in h_rep and "## Read by OCR" in h_rep,
+          "report still counts and lists OCR'd papers after a refresh that read nothing")
+
     print("\npagination")
     check(mm._next_link('<https://api.mendeley.com/documents?marker=abc>; rel="next"')
           == "https://api.mendeley.com/documents?marker=abc", "next link parsed")

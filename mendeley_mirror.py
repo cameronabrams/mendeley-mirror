@@ -1018,6 +1018,15 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         report.append({"key": stem, "status": prior["status"],
                                        "title": doc.get("title", ""),
                                        "detail": prior.get("detail", "")})
+                    elif prior.get("status") == "ocr":
+                        # Skipped because its extract exists, but it is still
+                        # machine-read text, and the report is where that is
+                        # said. Leaving it out emptied "Read by OCR" for all 108
+                        # papers on the first refresh after the OCR run.
+                        report.append({"key": stem, "status": "ocr",
+                                       "title": doc.get("title", ""),
+                                       "detail": f"{prior.get('chars', 0)} characters "
+                                                 f"across {prior.get('pages', 0)} pages"})
                     continue
                 progress(f"  {seen}/{total}  {stem[:44]}")
                 try:
