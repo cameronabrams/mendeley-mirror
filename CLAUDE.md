@@ -158,8 +158,11 @@ re-refined, superseded and obsoleted — so a claim about a structure carries a 
 and has a shelf life a claim about a published page does not.
 
 The `.bat`, `.sh`, and `.vbs` launchers are thin — keep `run_mirror.sh` and
-`run_mirror.bat` in step when either changes, and remember `refresh_quiet.bat` is
-the one the scheduled task runs, so it must never prompt or pause.
+`run_mirror.bat` in step when either changes. Neither scheduled entry point may ever
+prompt or pause: `refresh_quiet.bat` is what a Windows scheduled task runs
+(`install_schedule.bat` sets it up), and `run_mirror.sh` is what a systemd user
+timer runs on Linux. Which one owns the hourly refresh is a per-machine fact that
+has changed before, so check it rather than assuming it.
 
 ## Direction of travel
 
@@ -273,9 +276,14 @@ Order of operations, because the expensive mistake is skipping the first step:
 4. **Don't file a duplicate.** If the dry run says "already in the library" and
    `text/<key>.md` exists, the library has it — delete the download instead of
    attaching a second copy.
-5. **Refresh, minding the schedule.** The hourly task refreshes on its own at
-   about one minute past. Don't start a run that could still be going then; two
-   refreshes at once make Syncthing conflict files in `.mirror/`.
+5. **Refresh, minding the schedule.** A scheduled refresh runs hourly on its
+   own; find out when rather than guessing (`systemctl --user list-timers` for a
+   systemd timer, Task Scheduler on Windows). Two refreshes at once make Syncthing
+   conflict files in `.mirror/`. Where the schedule is a systemd service, refresh
+   by starting that service (`systemctl --user start <unit>.service`), which
+   cannot run twice at once; calling the script directly can overlap the timer. A
+   long manual run, such as `--ocr` over many scans, should stop the timer first
+   and restart it from a trap, so a failure cannot leave the refresh switched off.
 
 One caveat worth carrying: **attaching a preprint to a published reference gives
 you the preprint's pagination.** The text is right and the page numbers are not,
