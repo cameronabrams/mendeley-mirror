@@ -206,7 +206,7 @@ def main():
     pdf_bytes = doc.tobytes()
     doc.close()
 
-    body, pages, chars, content = mm.extract_pdf_text(pdf_bytes)
+    body, pages, chars, content, note = mm.extract_pdf_text(pdf_bytes)
     check(pages == 2, f"page count read ({pages})")
     check("<!-- p. 1 -->" in body and "<!-- p. 2 -->" in body, "page markers emitted")
     check("catalysis efficiency" in body, "hyphenation across a line break repaired")
@@ -214,7 +214,7 @@ def main():
 
     scan = pymupdf.open()
     scan.new_page()  # a page with no text layer, as a scan would be
-    empty_body, empty_pages, empty_chars, empty_content = mm.extract_pdf_text(scan.tobytes())
+    empty_body, empty_pages, empty_chars, empty_content, _ = mm.extract_pdf_text(scan.tobytes())
     scan.close()
     check(empty_chars < mm.MIN_CHARS_PER_PAGE * max(empty_pages, 1),
           f"textless page falls under the scan threshold ({empty_chars} chars)")
@@ -228,7 +228,7 @@ def main():
     for _ in range(29):
         page = stamped.new_page()
         page.insert_text((72, 72), stamp, fontsize=9)
-    st_body, st_pages, st_chars, st_content = mm.extract_pdf_text(stamped.tobytes())
+    st_body, st_pages, st_chars, st_content, _ = mm.extract_pdf_text(stamped.tobytes())
     stamped.close()
     check(st_chars >= mm.MIN_CHARS_PER_PAGE * st_pages,
           f"stamped scan clears the raw threshold, as the real one did ({st_chars})")
@@ -243,11 +243,49 @@ def main():
         page.insert_textbox(pymupdf.Rect(72, 90, 420, 700),
                             (f"Section {n} discusses the integrator in detail. " * 12),
                             fontsize=9)
-    r_body, r_pages, r_chars, r_content = mm.extract_pdf_text(real.tobytes())
+    r_body, r_pages, r_chars, r_content, _ = mm.extract_pdf_text(real.tobytes())
     real.close()
     check(r_content > mm.MIN_CHARS_PER_PAGE * r_pages,
           f"paper with a running head stays readable ({r_content} content chars)")
     check(r_content < r_chars, "the running head itself was discounted")
+
+    check(note == "", "a clean paper carries no garble note")
+
+    # A broken font encoding reads as punctuation soup of normal length. Real
+    # case: Allington et al. 2001 came out 2-14% alphanumeric on every page with
+    # PyMuPDF while pdftotext read 87-97%, and the length checks passed it.
+    soup = ",     , , ,   ,       ?@ ,    , ,      ,    :D;  , 4   . " * 30
+    check(mm.page_is_garbled(soup), "punctuation soup is judged garbled")
+    check(not mm.page_is_garbled("Conversion rose with temperature. " * 20),
+          "prose is not judged garbled")
+    check(not mm.page_is_garbled(("0.92 244 +/- 2 | 0.80 168 +/- 1 | " * 20)),
+          "a numeric table is not judged garbled")
+    check(not mm.page_is_garbled("シアネート硬化エポキシ樹脂の熱機械特性に関する実験的評価。" * 10),
+          "Japanese text is not judged garbled")
+    check(not mm.page_is_garbled(", ; :"), "a short page is not judged at all")
+
+    # Exercise the repair path without depending on a real broken font: swap in
+    # an extractor seam. The page the "PDF library" garbles comes back from the
+    # fallback; the page nobody can read is dropped, marker and all.
+    orig_get = pymupdf.Page.get_text
+    def soup_page_two(self, *a, **k):
+        return soup if self.number == 1 else orig_get(self, *a, **k)
+    pymupdf.Page.get_text = soup_page_two
+    try:
+        good = "The fallback read this page properly and at length. " * 10
+        b1, p1, c1, k1, n1 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: ["", good])
+        check("fallback read this page" in b1 and ",   , ," not in b1,
+              "a garbled page is replaced by the fallback's reading")
+        check("re-read with pdftotext" in n1, f"repair is noted ({n1!r})")
+        b2, p2, c2, k2, n2 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: None)
+        check("<!-- p. 2 -->" not in b2 and "<!-- p. 1 -->" in b2,
+              "an unrepairable garbled page is dropped, marker and all")
+        check("dropped" in n2, f"drop is noted ({n2!r})")
+        b3, *_, n3 = mm.extract_pdf_text(pdf_bytes, fallback=lambda d: ["", soup])
+        check("<!-- p. 2 -->" not in b3 and "dropped" in n3,
+              "a fallback that is garbled too does not rescue the page")
+    finally:
+        pymupdf.Page.get_text = orig_get
 
     # Short documents are exempt: across one or two pages "repeated on most
     # pages" is meaningless, and a note should not be judged on it.

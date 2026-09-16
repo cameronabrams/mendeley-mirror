@@ -834,25 +834,104 @@ def content_chars(page_texts: list[str]) -> int:
     return total
 
 
-def extract_pdf_text(data: bytes) -> tuple[str, int, int, int]:
-    """Return (markdown body, page count, character count, content characters).
+# A page is judged garbled when too little of it is letters or digits. PyMuPDF
+# reads some fonts with broken encodings as a stream of punctuation and control
+# characters; Allington et al. 2001 came out at 2-14% alphanumeric on every page,
+# where poppler's pdftotext reads the same pages at 87-97%. Across the library's
+# 32,000 text pages the split is clean: garbled pages sit below 0.15, real text
+# above 0.7, and the handful between are tables and reference lists.
+GARBLED_ALNUM_SHARE = 0.25
+# Pages with less than this many non-space characters are too short to judge.
+GARBLE_MIN_CHARS = 200
 
-    The body keeps every character; only the *decision* about whether this is a
-    text layer uses the boilerplate-stripped count.
+
+def alnum_share(text: str) -> float:
+    """Fraction of non-whitespace characters that are letters or digits."""
+    ns = [c for c in text if not c.isspace()]
+    return sum(c.isalnum() for c in ns) / len(ns) if ns else 1.0
+
+
+def page_is_garbled(text: str) -> bool:
+    """True for a substantial page whose characters are mostly not text.
+
+    Counting characters cannot tell a text layer from a broken font encoding:
+    ",   , , ?@ , :D;" is as long as a sentence. So a page long enough to judge
+    is called garbled when its letters and digits fall under
+    GARBLED_ALNUM_SHARE. isalnum() counts CJK and accented letters, so a
+    Japanese or French paper is not mistaken for noise.
+    """
+    ns = sum(1 for c in text if not c.isspace())
+    return ns >= GARBLE_MIN_CHARS and alnum_share(text) < GARBLED_ALNUM_SHARE
+
+
+def pdftotext_pages(data: bytes) -> list[str] | None:
+    """Per-page text from poppler's pdftotext, or None when it is unavailable.
+
+    Optional by design: the mirror runs on machines without poppler (Windows),
+    and there a garbled page is simply dropped rather than repaired.
+    """
+    import shutil
+    import subprocess
+    exe = shutil.which("pdftotext")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "-enc", "UTF-8", "-", "-"], input=data,
+                             capture_output=True, timeout=120, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    pages = out.decode("utf-8", "replace").split("\f")
+    if pages and not pages[-1].strip():
+        pages = pages[:-1]  # pdftotext ends with a form feed
+    return pages
+
+
+def extract_pdf_text(data: bytes, fallback=pdftotext_pages
+                     ) -> tuple[str, int, int, int, str]:
+    """Return (markdown body, page count, character count, content characters, note).
+
+    The body keeps every character of every readable page; only the *decision*
+    about whether this is a text layer uses the boilerplate-stripped count.
+
+    A page PyMuPDF garbles is re-read with ``fallback`` (pdftotext); if that
+    cannot read it either, the page is left out of the body and out of the
+    content count, exactly as an image-only page would be. A garbled page must
+    never be written as text: it passes every length check and then answers
+    every search with a confident zero. ``note`` says what happened, or is "".
     """
     import pymupdf  # imported lazily so --attachments none needs no PDF stack
 
-    chunks, chars, raw_pages = [], 0, []
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         pages = doc.page_count
-        for n, page in enumerate(doc, 1):
-            raw = page.get_text("text") or ""
-            raw_pages.append(raw)
-            text = clean_page_text(raw)
-            chars += len(text.strip())
-            if text.strip():
-                chunks.append(f"<!-- p. {n} -->\n\n{text.strip()}")
-    return "\n\n".join(chunks), pages, chars, content_chars(raw_pages)
+        raw_pages = [page.get_text("text") or "" for page in doc]
+
+    garbled = [i for i, raw in enumerate(raw_pages) if page_is_garbled(raw)]
+    repaired = dropped = 0
+    if garbled:
+        alt = fallback(data) if fallback else None
+        for i in garbled:
+            if alt is not None and i < len(alt) and alt[i].strip() \
+                    and not page_is_garbled(alt[i]):
+                raw_pages[i] = alt[i]
+                repaired += 1
+            else:
+                raw_pages[i] = ""
+                dropped += 1
+
+    chunks, chars = [], 0
+    for n, raw in enumerate(raw_pages, 1):
+        text = clean_page_text(raw)
+        chars += len(text.strip())
+        if text.strip():
+            chunks.append(f"<!-- p. {n} -->\n\n{text.strip()}")
+
+    notes = []
+    if repaired:
+        notes.append(f"{repaired} garbled page(s) re-read with pdftotext")
+    if dropped:
+        notes.append(f"{dropped} garbled page(s) dropped")
+    return ("\n\n".join(chunks), pages, chars, content_chars(raw_pages),
+            "; ".join(notes))
 
 
 def ocr_pdf_text(data: bytes, dpi: int = 300) -> tuple[str, int]:
@@ -955,12 +1034,14 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     empty = [r for r in rows if r["status"] == "no-text"]
     failed = [r for r in rows if r["status"] == "failed"]
     ocred = [r for r in rows if r["status"] == "ocr"]
+    garbled = [r for r in rows if r["status"] == "garbled"]
     lines = [
         "# Extraction report",
         "",
         f"- extracted this run: {extracted}",
         f"- no text layer (probably scans): {len(empty)}",
         f"- read by OCR: {len(ocred)}",
+        f"- garbled text layer, pages repaired or dropped: {len(garbled)}",
         f"- failed outright: {len(failed)}",
         "",
         "Anything under 'No extractable text' is invisible to any text search of",
@@ -970,9 +1051,13 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
         "a machine guessed every character. Those extracts carry ocr: true and a",
         "banner. Verify quotations and all numbers against the rendered page.",
         "",
+        "Anything under 'Garbled text layer' had pages the PDF library read as",
+        "punctuation soup. Those pages were re-read with pdftotext, or left out of",
+        "the extract where that failed too; a missing page marker means the latter.",
+        "",
     ]
     for label, rows_ in (("No extractable text", empty), ("Read by OCR", ocred),
-                         ("Failed", failed)):
+                         ("Garbled text layer", garbled), ("Failed", failed)):
         if not rows_:
             continue
         lines += [f"## {label}", ""]
@@ -1014,7 +1099,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 if prior.get("filehash") == f.get("filehash") and (
                         text_target.exists() or prior.get("status") in ("no-text", "not-pdf")):
                     skipped += 1
-                    if prior.get("status") in ("no-text", "failed"):
+                    if prior.get("status") in ("no-text", "failed", "garbled"):
                         report.append({"key": stem, "status": prior["status"],
                                        "title": doc.get("title", ""),
                                        "detail": prior.get("detail", "")})
@@ -1056,7 +1141,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         known[f["id"]] = {"filehash": f.get("filehash"), "status": "not-pdf"}
                         continue
 
-                    body, pages, chars, content = extract_pdf_text(data)
+                    body, pages, chars, content, garble = extract_pdf_text(data)
                     from_ocr = False
                     if content < MIN_CHARS_PER_PAGE * max(pages, 1) and ocr:
                         progress(f"  {seen}/{total}  {stem[:36]} (ocr)")
@@ -1076,6 +1161,10 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         text_target.unlink(missing_ok=True)
                     else:
                         status, detail = ("ocr", "read by OCR") if from_ocr else ("ok", "")
+                        if garble and not from_ocr:
+                            status, detail = "garbled", garble
+                            report.append({"key": stem, "status": "garbled",
+                                           "title": doc.get("title", ""), "detail": garble})
                         if from_ocr:
                             report.append({"key": stem, "status": "ocr",
                                            "title": doc.get("title", ""),
