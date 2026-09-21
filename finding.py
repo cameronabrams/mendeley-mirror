@@ -98,6 +98,11 @@ def normalize(s: str) -> str:
 # for an offset near zero; see derive_offset.
 EDGE_CHARS = 160
 
+# How much a running head may wander between pages and still count as "the same
+# place". Wide enough for a ragged last line, narrow enough that a figure number
+# does not cluster with itself by chance.
+POSITION_BAND = 120
+
 
 def page_text(extract: str, page: int) -> str | None:
     """The text under one `<!-- p. N -->` marker, or None if there is no such page."""
@@ -180,6 +185,65 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
     if len(ranked) > 1 and ranked[1][1] == best[1]:
         return None      # two candidates equally supported: no winner, so say so
     return best
+
+
+def _page_bodies(extract: str) -> list[tuple[int, str]]:
+    """(marker number, that page's text) for every marker, in order."""
+    marks = [(m.start(), m.end(), int(m.group(1)))
+             for m in re.finditer(r"<!-- p\. (\d+) -->", extract)]
+    return [(n, extract[e:(marks[i + 1][0] if i + 1 < len(marks) else len(extract))])
+            for i, (_s, e, n) in enumerate(marks)]
+
+
+def confirm_offset(extract: str, page: int, journal_page: int) -> int | None:
+    """Support for an offset the OPERATOR claims, or None. Never guesses one.
+
+    derive_offset looks near the page edges, which is where a running head sits
+    on most papers and not on all of them. Lin1999Effect prints its footer and
+    then a Wiley licence block, so the page number lands ~410 characters from the
+    end of every page -- outside any edge window, yet at the SAME place on all
+    twelve pages. That regularity is the real signal; proximity to the edge was
+    only ever a proxy for it.
+
+    So this scans the whole page and asks a different question: does the claimed
+    offset show up at a consistent position across pages? A running head does. A
+    figure number does not -- "Figure 8" on marker 8 sits wherever the figure is.
+
+    It is deliberately NOT used to derive an offset on its own. Measured over the
+    2129 extracts with a known first page, letting it guess unaided recovers 44
+    correct offsets and invents 19 wrong ones -- 70% precision against the edge
+    scan's 88% -- and a wrong locator is the failure that gets copied into a
+    manuscript. As a test of a number a person already asserted it cannot invent
+    anything: the hypothesis comes from the human, the evidence from the page.
+    """
+    pp = _page_bodies(extract)
+    if len(pp) < 3:
+        return None
+    off = journal_page - page
+    positions: list[tuple[int, int]] = []       # (marker page, distance from end)
+    starts: list[tuple[int, int]] = []          # (marker page, distance from start)
+    for n, body in pp:
+        want = str(n + off)
+        if not want.lstrip("-").isdigit():
+            continue
+        for m in re.finditer(r"(?<![\d.-])" + re.escape(want) + r"(?![\d.])", body):
+            positions.append((n, len(body) - m.end()))
+            starts.append((n, m.start()))
+
+    def clustered(occ: list[tuple[int, int]]) -> int:
+        """Most distinct pages whose occurrence falls inside one 120-char band."""
+        if not occ:
+            return 0
+        occ = sorted(occ, key=lambda x: x[1])
+        best = lo = 0
+        for hi in range(len(occ)):
+            while occ[hi][1] - occ[lo][1] > POSITION_BAND:
+                lo += 1
+            best = max(best, len({pg for pg, _ in occ[lo:hi + 1]}))
+        return best
+
+    support = max(clustered(positions), clustered(starts))
+    return support if support >= max(3, int(0.6 * len(pp))) else None
 
 
 def next_ordinal(path: Path) -> int:
@@ -265,16 +329,28 @@ def main() -> int:
     derived = derive_offset(text)
     if args.journal_page:
         if derived is None:
-            die(f"cannot derive a page offset for {args.key} -- its printed page numbers do not "
-                f"survive extraction, so --journal-page cannot be verified. Record it without "
-                f"--journal-page and cite the marker, or check the rendered page by hand.")
-        off, agree = derived
-        want = args.page + off
-        if str(args.journal_page).strip() != str(want):
-            die(f"offset says marker p. {args.page} is printed page {want} "
-                f"(offset {off:+d}, agreeing on {agree} pages), not {args.journal_page}. "
-                f"Nothing written.")
-        locator += f" · printed {want} (offset {off:+d}, derived from {agree} pages)"
+            # The edge scan found nothing. Before refusing -- which blocks a
+            # correct record and costs the locator entirely -- test the operator's
+            # own number against the page positions. This cannot invent an offset;
+            # it can only agree or stay silent.
+            support = confirm_offset(text, args.page, int(args.journal_page))
+            if support is None:
+                die(f"cannot derive a page offset for {args.key}, and marker p. {args.page} "
+                    f"does not carry {args.journal_page} at a consistent position either. "
+                    f"Check the printed number on the rendered page "
+                    f"(uv run --script get_pdf.py {args.key}); if it is right, record this "
+                    f"without --journal-page and say in --used-for where the number came from.")
+            off = int(args.journal_page) - args.page
+            locator += (f" · printed {args.journal_page} (offset {off:+d}, confirmed at a "
+                        f"consistent position on {support} pages)")
+        else:
+            off, agree = derived
+            want = args.page + off
+            if str(args.journal_page).strip() != str(want):
+                die(f"offset says marker p. {args.page} is printed page {want} "
+                    f"(offset {off:+d}, agreeing on {agree} pages), not {args.journal_page}. "
+                    f"Nothing written.")
+            locator += f" · printed {want} (offset {off:+d}, derived from {agree} pages)"
     elif derived:
         off, agree = derived
         locator += f" · printed {args.page + off} (offset {off:+d}, derived from {agree} pages)"

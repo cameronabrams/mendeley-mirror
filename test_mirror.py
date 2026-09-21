@@ -902,6 +902,47 @@ def main():
     check(patch == {"identifiers": {"doi": "10.1/x"}},
           "merging into an empty identifiers block works")
 
+    # Lin1999Effect: the footer is followed by a Wiley licence block of constant
+    # length, so the printed page number sits ~410 characters from the end of
+    # EVERY page -- outside any edge window, but in the same place every time.
+    # The edge scan refuses, and refusing blocks a correct record: the operator's
+    # only route was to drop --journal-page and lose the locator.
+    BANNER = ("Downloaded from https://example.com/doi/10.1/x by Example University, "
+              "Wiley Online Library on [21/09/2026]. See the Terms and Conditions "
+              "on Wiley Online Library for rules of use; OA articles are governed "
+              "by the applicable Creative Commons License")
+    LIN = "".join(
+        f"<!-- p. {n} -->\n\n{'body sentence here. ' * 30}\n"
+        f"{1926 + n} LIN, SU, AND HONG\n{BANNER}\n\n"
+        for n in range(1, 13))
+    check(fnd.derive_offset(LIN) is None,
+          "the edge scan still refuses when a licence block displaces the footer")
+    check(fnd.confirm_offset(LIN, 8, 1934) is not None,
+          "but the operator's own page number is confirmed by its consistent position")
+
+    # The confirmation must be able to FAIL, or it is worse than no check at all.
+    check(fnd.confirm_offset(LIN, 8, 1935) is None, "an off-by-one claim is not confirmed")
+    check(fnd.confirm_offset(LIN, 8, 1933) is None, "nor is it off by one the other way")
+    check(fnd.confirm_offset(LIN, 8, 8) is None, "nor a claim that the marker is the page")
+
+    # A number that matches by coincidence moves around the page; a running head
+    # does not. "Figure N" on marker N is the exact decoy that broke the old scan.
+    SCATTER = "".join(
+        f"<!-- p. {n} -->\n\n{'filler words here. ' * (3 * n)}Figure {n} shows the result.\n"
+        f"{'more filler text. ' * (36 - 3 * n)}\n\n"
+        for n in range(1, 13))
+    check(fnd.confirm_offset(SCATTER, 8, 8) is None,
+          "a number at a different place on every page confirms nothing")
+
+    # And the tolerance is a real number, not a wish: a head that wanders further
+    # than POSITION_BAND between pages is not treated as the same place.
+    DRIFT = "".join(
+        f"<!-- p. {n} -->\n\n{'body. ' * (10 + 25 * n)}\n{1926 + n}\n"
+        f"{'tail padding. ' * (2 + 20 * n)}\n\n"
+        for n in range(1, 13))
+    check(fnd.confirm_offset(DRIFT, 8, 1934) is None,
+          "a page number that drifts far between pages is not a running head")
+
     print("\nPEP 723 headers: ten copies of the dependency list, kept honest")
 
     # There is no pyproject.toml here on purpose -- every script carries its own
