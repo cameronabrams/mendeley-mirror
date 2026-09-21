@@ -100,6 +100,12 @@ uv run --script test_mirror.py
 Offline throughout: pure functions plus a stubbed API, no network and no
 Mendeley account.
 
+## Where this is going
+
+[ROADMAP.md](ROADMAP.md) — what is likely next, and what is deliberately not
+being done. The first item is migrating to Zotero as a backend, without
+reassigning a single citation key.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Cameron F. Abrams.
