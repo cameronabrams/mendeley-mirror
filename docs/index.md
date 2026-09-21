@@ -66,5 +66,6 @@ findings
 structures
 corrections
 scheduling
+operating
 reference
 ```

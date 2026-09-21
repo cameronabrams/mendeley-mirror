@@ -80,6 +80,7 @@ mirror by its own absolute default, not by where they sit.
 | Structures | which papers cite which PDB entries, and which cited structures have no paper here |
 | Correcting a reference | `mendeley_edit.py`, and the properties that keep it from destroying good metadata |
 | Keeping it fresh | scheduling a refresh, and the rule that there is never more than one at a time |
+| How it is run | why the clone and the library are separate, where state lives, and who may write |
 | Reference | every command-line option, the tests, and the small print |
 
 ## The direction of travel
