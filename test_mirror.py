@@ -498,9 +498,11 @@ def main():
 
     # A DOI is allowed to contain brackets, and old Elsevier and Wiley DOIs are
     # full of them. Excluding those characters from the pattern truncated such a
-    # DOI mid-string and reported the paper as unidentifiable: one was filed by
-    # sidecar as a workaround, and another sat in rejected/ for ten days with
-    # nobody diagnosing why.
+    # DOI mid-string. NOTE, because the first telling of this got it wrong: this
+    # bites the page-text path only. filename_dois carries a second pattern,
+    # 10\.\d{4,9}[_-][^\s/]+, which never used the restrictive class, so a file
+    # NAMED for its bracketed DOI always resolved. A file that must be identified
+    # from its own first page did not.
     def dois(text):
         return [inbox.clean_doi(m) for m in inbox.DOI_RE.findall(text)]
 

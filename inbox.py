@@ -324,6 +324,8 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
         return None, "", f"cannot read the PDF ({exc})"
 
     tried: list[str] = []
+    unresolved: list[str] = []      # looked up and got nothing back, which is not
+                                    # the same failure as looked up and did not match
     # A 10.2210/pdb... DOI identifies a STRUCTURE DEPOSITION, not a paper, and its
     # title mirrors the paper's closely enough to pass any similarity test. Two
     # files in one batch resolved to the deposition instead of the article.
@@ -342,6 +344,7 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
             tried.append(doi)
             meta = resolve_doi(doi)
             if not meta:
+                unresolved.append(doi)
                 continue
             # A DOI written into the file name is a deliberate act, so trust it
             # even when the PDF is a scan with no text to check it against.
@@ -367,8 +370,22 @@ def identify(path: Path) -> tuple[dict | None, str, str]:
         return msg, msg["doi"], "crossref title search"
 
     if tried:
-        return None, "", ("found DOIs but none matched the text on page 1: "
-                          + ", ".join(tried[:3]))
+        # These are different failures and used to read identically. A DOI that
+        # no registry would answer for is a network or registry problem and the
+        # file is probably fine; a DOI that resolved to a paper whose title is
+        # not on page 1 means the file is not what its name says. Saying "none
+        # matched the text on page 1" for the first sent at least one
+        # investigation after the wrong thing.
+        if len(unresolved) == len(tried):
+            return None, "", ("no registry answered for the DOI(s) found -- a network or "
+                              "registry failure, not a mismatch. Try again before "
+                              "concluding anything about the file: "
+                              + ", ".join(tried[:3]))
+        matched_none = [d for d in tried if d not in unresolved]
+        detail = ", ".join(matched_none[:3])
+        if unresolved:
+            detail += f" (and {len(unresolved)} that no registry answered for)"
+        return None, "", ("found DOIs but none matched the text on page 1: " + detail)
     if len(page1.strip()) < 200:
         return None, "", ("this PDF is a scan with no text layer, so there is nothing "
                           "to identify it by -- rename it to its DOI, e.g. "
