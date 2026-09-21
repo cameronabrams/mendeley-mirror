@@ -769,6 +769,34 @@ def main():
           or fnd.derive_offset(NOISE)[1] >= 3,
           "removing the page number does not invent one")
 
+    # THE BUG THAT PROMPTED EDGE_CHARS AND THE TIE RULE (Kendrick1990Calculated,
+    # Hamerton1996Molecular). A real running head at the page edge competes with
+    # small integers -- figure numbers, section numbers -- deeper in the text. The
+    # window used to be wide enough to reach them, and the tie-break then preferred
+    # the SMALLER offset, which is the coincidence every time: a wrong journal page,
+    # stated with a derivation behind it.
+    FILLER = "lorem ipsum dolor sit amet " * 12          # pushes the decoys past EDGE_CHARS
+    TRAP = "".join(
+        f"<!-- p. {n} -->\n\nJ. Mater. Sci. 31 (1996) {310 + n}\n"
+        f"{FILLER}\nsee Figure {n} and Table {n} for detail\n{FILLER}\n\n"
+        for n in (1, 2, 3, 4))
+    got = fnd.derive_offset(TRAP)
+    check(got is not None and got[0] == 310,
+          f"the running head wins over decoys deeper in the page (got {got})")
+
+    # And when the two really are tied, no answer is the answer. Every page carries
+    # the head once and the decoy once, so both offsets have identical support.
+    TIED = "".join(f"<!-- p. {n} -->\n\n{610 + n}\n\n{n}\n" for n in (1, 2, 3, 4))
+    check(fnd.derive_offset(TIED) is None,
+          "two equally supported offsets yield None rather than the smaller one")
+
+    # Guard against the fix being 'tighten until nothing derives': the plain case
+    # above must still derive, and a head at the very end of the page must too.
+    TRAILING = "".join(f"<!-- p. {n} -->\n\nbody text here\n{FILLER}\n{500 + n}\n"
+                       for n in (1, 2, 3, 4))
+    check(fnd.derive_offset(TRAILING) == (500, 4),
+          "a footer at the end of a long page is still found")
+
     # Two pages can agree by chance; the threshold demands a majority of pages.
     SHORT = "<!-- p. 1 -->\n\nx 5 y\n\n<!-- p. 2 -->\n\nx 6 y\n"
     check(fnd.derive_offset(SHORT) is None,

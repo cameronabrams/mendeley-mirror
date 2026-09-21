@@ -93,6 +93,12 @@ def normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
+# How far into a page a running head or footer can sit. Wider than this and the
+# window reaches figure captions and reference markers, whose small integers vote
+# for an offset near zero; see derive_offset.
+EDGE_CHARS = 160
+
+
 def page_text(extract: str, page: int) -> str | None:
     """The text under one `<!-- p. N -->` marker, or None if there is no such page."""
     marks = [(m.start(), m.end(), int(m.group(1)))
@@ -118,6 +124,29 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
     whether the claimed number appeared anywhere on the page, which on a dense page
     is true of almost any small integer: a check that could not fail, reported as
     "verified".
+
+    Two later corrections, both measured against the 2129 extracts whose bib entry
+    records a numeric first page (marker 1 == that page), which is ground truth the
+    derivation never sees:
+
+    * EDGE_CHARS was 300 leading and 400 trailing -- four or five lines, enough to
+      reach figure captions, section numbers and reference markers. Those small
+      integers vote for an offset near zero on a paper whose markers are also small,
+      and on a short paper they tie with the real running head.
+    * The tie-break preferred the SMALLER absolute offset, so every one of those ties
+      resolved to the coincidence rather than the head. It is exactly backwards: zero
+      is the offset a coincidence produces. Kendrick1990Calculated (+0 x4 against a
+      true +3994 x4) and Hamerton1996Molecular (+0 x3 against +310 x3) were both
+      recorded with a confidently wrong page number this way.
+
+    A tie is now refused outright. Across those 2129 papers the two changes together
+    take wrong offsets from 294 to 227 and precision from 85.4% to 88.2%, at a cost
+    of 4.2 points of coverage. Refusing a further margin (winner must lead by 2)
+    would reach 89.0%, but it refuses Kendrick and Hamerton too -- it converts the
+    reported bug into silence instead of fixing it -- so it is deliberately not done.
+
+    Returning None is a real answer, not a failure: Georjon1997Molecular prints its
+    running head where extraction puts it mid-page, and no edge window finds it.
     """
     marks = [(m.start(), m.end(), int(m.group(1)))
              for m in re.finditer(r"<!-- p\. (\d+) -->", extract)]
@@ -125,7 +154,7 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
     for i, (_s, e, n) in enumerate(marks):
         end = marks[i + 1][0] if i + 1 < len(marks) else len(extract)
         body = extract[e:end]
-        edges = body[:300] + " " + body[-400:]
+        edges = body[:EDGE_CHARS] + " " + body[-EDGE_CHARS:]
         cands = re.findall(r"(?<![\d.-])(\d{1,5})(?![\d.])", edges)
         # Article-number journals print "2040011-9" and have no journal page at all;
         # the suffix is the page. Without this easyAmber derived a WRONG offset that
@@ -139,13 +168,18 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
                 tally[off] = tally.get(off, 0) + 1
     if not tally:
         return None
-    best = max(tally.items(), key=lambda kv: (kv[1], -abs(kv[0])))
+    ranked = sorted(tally.items(), key=lambda kv: (-kv[1], abs(kv[0])))
+    best = ranked[0]
     # A real running footer appears on nearly every page. A coincidence appears on a
     # few. Requiring a clear majority is what separates them -- on the eight papers
     # whose offsets were derived by hand, every true offer agreed on 100% of pages
     # and the one false candidate on 21%.
     need = max(3, int(0.6 * len(marks)))
-    return best if best[1] >= need else None
+    if best[1] < need:
+        return None
+    if len(ranked) > 1 and ranked[1][1] == best[1]:
+        return None      # two candidates equally supported: no winner, so say so
+    return best
 
 
 def next_ordinal(path: Path) -> int:
