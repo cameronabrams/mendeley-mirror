@@ -99,3 +99,7 @@ uv run --script test_mirror.py
 
 Offline throughout: pure functions plus a stubbed API, no network and no
 Mendeley account.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Cameron F. Abrams.
