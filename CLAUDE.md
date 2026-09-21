@@ -2,8 +2,9 @@
 
 This is the tool, not the library. Everything here is hand-written source; the
 mirror it produces — `library.bib`, `index.md`, `text/`, `annotations/` — lives
-in a separate directory and is entirely generated. Read `README.md` first for
-what the tool does.
+in a separate directory and is entirely generated. Read `README.md` first for what the tool
+does; `docs/` holds the long-form documentation it points at, published to Read
+the Docs, and is where prose about *using* the tool belongs.
 
 **This file is about working on the tool. Using it is documented where its user
 is:** `<out>/CLAUDE.md` in the mirrored library — the filing loop, how to read

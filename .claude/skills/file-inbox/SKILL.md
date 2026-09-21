@@ -48,7 +48,8 @@ being filed was `10.1126/science.aae0474`.
 
 **No DOI at all** — DTIC/NTIS reports, theses, proceedings — needs a sidecar JSON
 beside the PDF with the same stem, and a sidecar overrides identification
-entirely. The shape is in `README.md`; do not invent fields.
+entirely. The shape is in `docs/filing.md` (and on the docs site under
+"Adding papers"); do not invent fields.
 
 ## 3. Search the library before filing anything
 
