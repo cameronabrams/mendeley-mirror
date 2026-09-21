@@ -227,6 +227,18 @@ def confirm_offset(extract: str, page: int, journal_page: int) -> int | None:
         if not want.lstrip("-").isdigit():
             continue
         for m in re.finditer(r"(?<![\d.-])" + re.escape(want) + r"(?![\d.])", body):
+            # A running head sits at a line boundary -- alone on its line, or at
+            # the start or end of the header line. "Figure 8 shows the trend" does
+            # not, and a figure number that happens to track the page number is
+            # otherwise indistinguishable from a footer: it recurs, and on a
+            # regularly laid out paper it recurs at a consistent position too.
+            line_start = body.rfind("\n", 0, m.start()) + 1
+            line_end = body.find("\n", m.end())
+            line_end = len(body) if line_end == -1 else line_end
+            at_edge = (not body[line_start:m.start()].strip()
+                       or not body[m.end():line_end].strip())
+            if not at_edge:
+                continue
             positions.append((n, len(body) - m.end()))
             starts.append((n, m.start()))
 

@@ -911,12 +911,19 @@ def main():
               "Wiley Online Library on [21/09/2026]. See the Terms and Conditions "
               "on Wiley Online Library for rules of use; OA articles are governed "
               "by the applicable Creative Commons License")
+    # The fixture carries BOTH sub-causes of the real failure: figure numbers that
+    # vote for offset zero, and a licence block that pushes the true footer out of
+    # the edge window. Either alone is survivable; together they produced a
+    # confident "printed 8 (offset +0, derived from 7 pages)" -- silent, wrong, and
+    # written into an append-only findings file.
     LIN = "".join(
-        f"<!-- p. {n} -->\n\n{'body sentence here. ' * 30}\n"
+        f"<!-- p. {n} -->\n\n{'body sentence here. ' * 12}Figure {n} shows the trend, "
+        f"and Table {n} lists the values.\n{'more body text. ' * 12}\n"
         f"{1926 + n} LIN, SU, AND HONG\n{BANNER}\n\n"
         for n in range(1, 13))
     check(fnd.derive_offset(LIN) is None,
-          "the edge scan still refuses when a licence block displaces the footer")
+          f"no offset is invented from figure numbers when the footer is displaced "
+          f"(got {fnd.derive_offset(LIN)})")
     check(fnd.confirm_offset(LIN, 8, 1934) is not None,
           "but the operator's own page number is confirmed by its consistent position")
 
