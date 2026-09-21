@@ -496,6 +496,39 @@ def main():
     print("\ninbox closing report")
     import inbox
 
+    # A DOI is allowed to contain brackets, and old Elsevier and Wiley DOIs are
+    # full of them. Excluding those characters from the pattern truncated such a
+    # DOI mid-string and reported the paper as unidentifiable: one was filed by
+    # sidecar as a workaround, and another sat in rejected/ for ten days with
+    # nobody diagnosing why.
+    def dois(text):
+        return [inbox.clean_doi(m) for m in inbox.DOI_RE.findall(text)]
+
+    check(dois("10.1016/s0032-3861(01)00634-6") == ["10.1016/s0032-3861(01)00634-6"],
+          "an Elsevier PII DOI survives its parentheses")
+    check(dois("10.1016/S0076-6879(09)66015-8") == ["10.1016/s0076-6879(09)66015-8"],
+          "and so does the one that sat in rejected/")
+    SICI = "10.1002/(SICI)1097-4628(19990906)73:10<1927::AID-APP12>3.0.CO;2-O"
+    check(dois(SICI) == [SICI.lower()],
+          "a Wiley SICI DOI survives brackets, angle brackets and a semicolon")
+    check(dois("10.1021/ma00078a014") == ["10.1021/ma00078a014"],
+          "a plain DOI is unchanged")
+
+    # The reason the brackets were excluded in the first place: prose puts a DOI
+    # in parentheses, and that closing bracket is the sentence's, not the DOI's.
+    # Balance decides which -- a closer with no opener before it is punctuation.
+    check(dois("see the paper (10.1234/abc) for detail") == ["10.1234/abc"],
+          "a bracket the prose opened is still trimmed")
+    check(dois("cite <10.1234/ang> and [10.1234/sq]") == ["10.1234/ang", "10.1234/sq"],
+          "so are angle brackets and square brackets")
+    check(dois("DOI: 10.1234/xyz.") == ["10.1234/xyz"], "and a sentence-ending period")
+    check(dois("10.1234/foo(2020)") == ["10.1234/foo(2020)"],
+          "but a DOI that really ends in a balanced bracket keeps it")
+
+    check(inbox.filename_dois("10.1016_s0032-3861(01)00634-6.pdf")
+          == ["10.1016/s0032-3861(01)00634-6"],
+          "the file-name path handles brackets too")
+
     # A clean run: the refresh instruction appears, and nothing else.
     r = inbox.closing_report(["a.pdf"], [], [], refresh_cmd="REFRESH")
     check("REFRESH" in r, "a successful run says to refresh")

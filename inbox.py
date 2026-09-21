@@ -69,7 +69,16 @@ except ImportError as exc:
     sys.exit(f"inbox.py must sit beside the other mirror scripts ({exc})")
 
 FILE_CT = "application/vnd.mendeley-file.1+json"
-DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"'<>,;)\]}]+", re.I)
+# A DOI may contain brackets, angle brackets and semicolons, and old Elsevier and
+# Wiley DOIs routinely do: 10.1016/s0032-3861(01)00634-6, and the SICI form
+# 10.1002/(SICI)1097-4628(19990906)73:10<1927::AID-APP12>3.0.CO;2-O. Excluding
+# those characters here truncated such a DOI mid-string -- 10.1016/s0032-3861(01)
+# 00634-6 became "10.1016/s0032-3861(01", which then matched nothing and reported
+# the paper as unidentifiable. So match everything up to whitespace or a quote,
+# and let clean_doi decide which trailing characters are punctuation.
+DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"']+", re.I)
+
+CLOSERS = {")": "(", "]": "[", "}": "{", ">": "<"}
 UA = "mendeley-mirror inbox.py (mailto:cfa22@drexel.edu)"
 
 STOP = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on",
@@ -86,9 +95,25 @@ def words(s: str) -> set:
 
 
 def clean_doi(raw: str) -> str:
-    # Publishers often run the DOI straight into the next word on a wrapped
-    # line; trailing punctuation is the only part we can safely trim.
-    return raw.strip().rstrip(".,;:)]}>").lower()
+    """Trim what is punctuation around a DOI without eating part of the DOI.
+
+    Publishers run a DOI straight into the next word on a wrapped line, and prose
+    puts one in brackets -- "(see 10.1234/abc)" -- so a trailing bracket usually is
+    not part of it. Usually. A DOI may genuinely end in a bracket, and old Elsevier
+    and Wiley DOIs are full of them, so the test is whether the bracket BALANCES:
+    a closer with no opener before it was the prose's, and one that has an opener
+    is the DOI's own.
+    """
+    doi = raw.strip()
+    while doi:
+        if doi[-1] in ".,;:":
+            doi = doi[:-1]
+            continue
+        if doi[-1] in CLOSERS and doi.count(doi[-1]) > doi.count(CLOSERS[doi[-1]]):
+            doi = doi[:-1]
+            continue
+        break
+    return doi.lower()
 
 
 def filename_dois(name: str) -> list[str]:
