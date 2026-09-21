@@ -4,6 +4,14 @@
 # document in this repository is Markdown and a second syntax is a reason for
 # an edit not to happen.
 
+import pathlib as _pathlib
+import re as _re
+
+# The version lives in mendeley_mirror.py and is read, never restated: a second
+# copy in this file would be one more thing to forget on a release.
+_src = (_pathlib.Path(__file__).parent.parent / "mendeley_mirror.py").read_text(encoding="utf-8")
+release = version = _re.search(r'^__version__ = "([^"]+)"', _src, _re.M).group(1)
+
 project = "mendeley-mirror"
 author = "Cameron F. Abrams"
 copyright = "2026, Cameron F. Abrams"
@@ -26,4 +34,4 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 html_theme = "furo"
 html_static_path = []
-html_title = "mendeley-mirror"
+html_title = f"mendeley-mirror {release}"

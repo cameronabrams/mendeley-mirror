@@ -21,6 +21,7 @@ Three more, not shown above because they are not part of an ordinary refresh:
 --no-annotations   skip the annotation export
 --quiet            for scheduled runs: no progress output, never prompt, log to
                    .mirror/mirror.log
+--version          print the version and exit
 ```
 
 There is **no re-extract flag.** A refresh skips any attachment whose file hash
@@ -62,3 +63,19 @@ Mendeley account. It prints a line per check and exits non-zero on failure.
   done. Three scripts write to Mendeley, all by hand and all with a confirmation
   prompt: `inbox.py` attaches files, `mendeley_push.py` adds a reference, and
   `mendeley_edit.py` corrects fields on one that is already there.
+
+
+## Which version wrote this mirror?
+
+Extraction behaviour has changed more than once — OCR for scanned attachments,
+then a `pdftotext` fallback for garbled text layers — and an extract carries no
+sign of which rules produced it. So the version is recorded where a reader will
+actually find it:
+
+- `mirror-status.md` says `written by mendeley-mirror X.Y.Z` beside the run times.
+- `.mirror/state.json` carries `mirror_version` alongside `last_run`.
+- `mendeley_mirror.py --version` prints it.
+
+That makes "this extract predates the garbled-text fix" a question the library
+can answer about itself, rather than one answered from a git log that the
+library does not carry.

@@ -902,6 +902,48 @@ def main():
     check(patch == {"identifiers": {"doi": "10.1/x"}},
           "merging into an empty identifiers block works")
 
+    print("\nPEP 723 headers: ten copies of the dependency list, kept honest")
+
+    # There is no pyproject.toml here on purpose -- every script carries its own
+    # inline header so `uv run --script` needs nothing installed, which is what
+    # makes this work on a bare Windows laptop. The cost is ten copies of the
+    # same facts, and nothing but this check would notice them drifting apart:
+    # a script whose header forgets a dependency fails at import time on a
+    # machine that has not run its sibling first, which is exactly the machine
+    # nobody is watching.
+    HERE = Path(__file__).parent
+    PINS = {"requests": "requests>=2.31", "pymupdf": "pymupdf>=1.24"}
+    scripts = sorted(HERE.glob("*.py"))
+    check(len(scripts) >= 9, f"found the scripts to check ({len(scripts)})")
+
+    for script in scripts:
+        src = script.read_text(encoding="utf-8")
+        head = re.search(r"^# /// script$(.*?)^# ///$", src, re.S | re.M)
+        if not head:
+            check(False, f"{script.name} has a PEP 723 header")
+            continue
+        dep = re.search(r"dependencies\s*=\s*\[([^\]]*)\]", head.group(1))
+        declared = set(re.findall(r'"([^"]+)"', dep.group(1) if dep else ""))
+
+        # What it actually needs: a direct import, or mendeley_mirror's own
+        # requests (pymupdf is imported lazily there, so it is NOT transitive).
+        body = src[head.end():]
+        wants = set()
+        if re.search(r"^\s*import requests", body, re.M) or "from mendeley_mirror import" in body:
+            wants.add(PINS["requests"])
+        if re.search(r"^\s*import pymupdf", body, re.M):
+            wants.add(PINS["pymupdf"])
+
+        check(declared == wants,
+              f"{script.name} declares exactly what it imports "
+              f"(declared {sorted(declared)}, needs {sorted(wants)})")
+
+    print("\nthe version is written down once, and the mirror records it")
+    check(re.fullmatch(r"\d+\.\d+\.\d+", mm.__version__) is not None,
+          f"__version__ is a three-part version ({mm.__version__})")
+    check(sum(1 for s_ in scripts if re.search(r'^__version__\s*=', s_.read_text(encoding="utf-8"), re.M)) == 1,
+          "exactly one file defines __version__")
+
     print("\n" + ("ALL CHECKS PASSED" if not fails else f"{len(fails)} FAILURES: {fails}"))
     print("sample entry:\n")
     print(bib.split("@")[1][:600])

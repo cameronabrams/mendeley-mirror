@@ -37,6 +37,20 @@ Usage:
 
 from __future__ import annotations
 
+__version__ = "1.0.0"
+"""The tool's version, and the only place it is written down.
+
+It exists so a mirror can say what produced it. Extraction behaviour has changed
+under people's feet twice -- OCR for scanned attachments, then a pdftotext
+fallback for garbled text layers -- and both times the only record of when was a
+git log that the library itself does not carry. `mirror-status.md` and
+`.mirror/state.json` now both record it, so "this extract predates the garbled-
+text fix" is a question the library can answer about itself.
+
+Bump it in the same commit as the behaviour it describes; nothing generates it.
+"""
+
+
 import argparse
 import base64
 import json
@@ -1314,6 +1328,7 @@ def write_status(out: Path, ok: bool, started: datetime, error: str = "") -> Non
         "",
         f"- last attempt: {now} — **{'ok' if ok else 'FAILED'}** ({took/60:.1f} min)",
         f"- last successful run: {last_ok}",
+        f"- written by mendeley-mirror {__version__}",
         "",
     ]
     if not ok:
@@ -1356,6 +1371,7 @@ def main() -> int:
     ap.add_argument("--reauth", action="store_true", help="discard saved tokens and log in again")
     ap.add_argument("--reconfigure", action="store_true",
                     help="re-enter the application ID, secret, and redirect URL")
+    ap.add_argument("--version", action="version", version=f"mendeley-mirror {__version__}")
     ap.add_argument("--quiet", action="store_true",
                     help="for scheduled runs: no progress output, never prompt, "
                          "log to .mirror/mirror.log")
@@ -1484,6 +1500,7 @@ def run(args, out: Path, mirror_dir: Path) -> int:
     write_index(docs, keymap, files_by_doc, ann_by_doc, out)
 
     state["last_run"] = datetime.now(timezone.utc).isoformat()
+    state["mirror_version"] = __version__
     save_json(state_path, state)
 
     note(f"Done. {len(docs)} references in {out / 'library.bib'}")
