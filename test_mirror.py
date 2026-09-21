@@ -496,6 +496,51 @@ def main():
     print("\ninbox closing report")
     import inbox
 
+    # A garbled text layer must be repaired here exactly as a refresh repairs it.
+    # It was not, and the asymmetry was expensive: a correctly named paper could
+    # not be identified from its own first page, while the same file once filed
+    # produced a clean extract. The failure reads "the title is not on page 1",
+    # which is true of what pymupdf returned and says nothing about the file.
+    class _FakePage:
+        def __init__(self, t): self._t = t
+        def get_text(self): return self._t
+
+    class _FakeDoc:
+        def __init__(self, pages): self._p = pages; self.page_count = len(pages)
+        def __getitem__(self, i): return _FakePage(self._p[i])
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    GARBLED = "\x01\x02\x03\x04\x05\x06 \x07\x08\x09\x0b\x0c " * 40
+    CLEAN = "Computer simulation of structure and properties of crosslinked polymers "
+    real_open, real_pdftotext = inbox.pymupdf.open, inbox.pdftotext_pages
+    _td = tempfile.mkdtemp()
+    fake_pdf = Path(_td) / "paper.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 not really a pdf, never parsed here")
+    try:
+        inbox.pymupdf.open = lambda _p: _FakeDoc([GARBLED, GARBLED])
+        inbox.pdftotext_pages = lambda _b: [CLEAN, CLEAN]
+        got = inbox.pdf_text(fake_pdf)
+        check("crosslinked polymers" in got,
+              "a garbled first page is re-read with pdftotext, as the mirror does")
+        check("\x01" not in got, "and the control characters do not survive")
+
+        # If pdftotext is unavailable the old text is still returned: degraded, but
+        # nothing is lost and nothing raises.
+        inbox.pdftotext_pages = lambda _b: None
+        got = inbox.pdf_text(fake_pdf)
+        check(got.strip().startswith("\x01"), "without pdftotext it degrades rather than failing")
+
+        # A page that is NOT garbled must be left alone -- the repair must not
+        # replace good text with pdftotext's differently-wrapped version.
+        inbox.pymupdf.open = lambda _p: _FakeDoc([CLEAN, CLEAN])
+        inbox.pdftotext_pages = lambda _b: ["WRONG WRONG WRONG", "WRONG WRONG WRONG"]
+        check("WRONG" not in inbox.pdf_text(fake_pdf),
+              "clean text is never replaced by the fallback")
+    finally:
+        inbox.pymupdf.open, inbox.pdftotext_pages = real_open, real_pdftotext
+        shutil.rmtree(_td, ignore_errors=True)
+
     # A DOI is allowed to contain brackets, and old Elsevier and Wiley DOIs are
     # full of them. Excluding those characters from the pattern truncated such a
     # DOI mid-string. NOTE, because the first telling of this got it wrong: this

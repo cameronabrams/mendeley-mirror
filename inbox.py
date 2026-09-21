@@ -62,7 +62,8 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from mendeley_mirror import (API, DEFAULT_OUT, Mendeley, config_dir,
-                                 get_app_config, load_json, mirror_state_dir)
+                                 get_app_config, load_json, mirror_state_dir,
+                                 page_is_garbled, pdftotext_pages)
     from mendeley_push import CSL_TO_MENDELEY, DOC_CT, csl_year, one, split_name
     from get_pdf import cache_dir
 except ImportError as exc:
@@ -135,8 +136,28 @@ def filename_dois(name: str) -> list[str]:
 # --------------------------------------------------------------------------
 
 def pdf_text(path: Path, pages: int = 2) -> str:
+    """The first pages as text, repairing a garbled text layer the way a refresh does.
+
+    Some PDFs carry a broken font encoding, so pymupdf returns control characters
+    where the words should be. mendeley_mirror has re-read those with pdftotext
+    since 2026-09-16, and inbox.py did not -- so a paper whose text layer is
+    garbled could not be identified from its own page, while the very same file,
+    once filed, produced a perfectly readable extract. That asymmetry cost a
+    correctly named paper a sidecar workaround and sent two investigations after
+    the wrong cause, because the failure reads as "the title is not on page 1",
+    which is true and not the point.
+    """
     with pymupdf.open(path) as doc:
-        return " ".join(doc[i].get_text() for i in range(min(pages, doc.page_count)))
+        out = [doc[i].get_text() for i in range(min(pages, doc.page_count))]
+    if not any(page_is_garbled(t) for t in out):
+        return " ".join(out)
+    repaired = pdftotext_pages(path.read_bytes())
+    if not repaired:
+        return " ".join(out)     # no pdftotext on this machine: nothing better to offer
+    for i, t in enumerate(out):
+        if page_is_garbled(t) and i < len(repaired) and not page_is_garbled(repaired[i]):
+            out[i] = repaired[i]
+    return " ".join(out)
 
 
 def has_content(path: Path, probe: int = 4) -> bool:
