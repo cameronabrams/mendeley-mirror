@@ -45,7 +45,7 @@ Sync/mendeley/                 ← the library, and only the library
 ├── annotations/           Muller2020Yield.md — your highlights and notes, by page
 ├── inbox/                 drop zone for PDFs you saved by hand (see below)
 ├── .mirror/               citation keys, extraction state, run log
-└── extraction-report.md   what came out empty, and why
+└── extraction-report.md   attachments whose text is not plain prose, and why
 ```
 
 The `uv run --script …` commands below assume you are in the clone. From
@@ -64,13 +64,50 @@ if you are going to quote from it: a paraphrase written months earlier is
 indistinguishable, later, from what the paper actually said.
 
 What it loses: equations come out mangled, table structure does not survive, and
-figures are gone entirely. Each file says so at the top. Scanned papers have no
-text layer at all and yield nothing; rather than leaving a silent hole, those are
-listed in `extraction-report.md`, so the gap in what Claude can see is a known
-one. `--attachments keep` keeps the PDFs too, if you ever want them local.
+figures are gone entirely. Each file says so at the top. `--attachments keep`
+keeps the PDFs too, if you ever want them local.
 
 If a previous run already downloaded PDFs into `pdf/`, they are re-used for
 extraction instead of being fetched again, then removed.
+
+### When the text is not plain text
+
+Not every PDF yields clean prose, and the difference decides what the extract is
+good for. `extraction-report.md` lists every attachment that is not ordinary
+text, in three classes:
+
+- **No text layer** — an image-only scan. It is mirrored and citable but
+  invisible to any text search, so the report exists to make that gap a known
+  one rather than a silent hole.
+- **Read by OCR** — those same scans, once you run the opt-in pass below. The
+  extract carries `ocr: true` in its front matter, and that marker matters:
+  OCR output runs around 81% word-accurate, which is enough to *find* a passage
+  and not enough to *quote* one. Treat an OCR'd extract as a finding aid and read
+  the rendered page before quoting it.
+- **Garbled text layer** — a PDF whose embedded text decodes to nonsense, usually
+  a broken font encoding. These used to be mirrored as plausible-looking gibberish.
+  Since 2026-09-16 each garbled page is re-read with `pdftotext` when that
+  produces something better, and the extract records how many pages were repaired
+  or dropped.
+
+Two smaller traps worth knowing. A short extract is not evidence of a short
+paper: some scans are dozens of pages of one repeated permission stamp, and the
+known ones are listed in `stamp-only-extracts.tsv`. And every attachment on a
+record is extracted, with all but the first suffixed — so `text/<key>-2.md` is a
+*second file on that record*, not a second paper, and a report row naming
+`<key>-2` is not saying the paper is unreadable.
+
+**Running OCR.** It is never part of a scheduled refresh, because it is slow and
+needs an extra dependency:
+
+```
+uv run --with rapidocr-onnxruntime --script mendeley_mirror.py --ocr
+```
+
+It reads only the attachments that failed the text-layer check. On a large
+library this takes hours; if a refresh is scheduled, stop the timer first and
+restart it afterwards, since two runs at once will make sync conflicts out of
+the state files.
 
 ## One-time setup
 
@@ -443,6 +480,22 @@ run_mirror.bat --no-abstracts      leave abstracts out of library.bib
 run_mirror.bat --out D:\refs       mirror somewhere else
 run_mirror.bat --reauth            forget tokens and log in again
 ```
+
+Three more, not shown above because they are not part of an ordinary refresh:
+
+```
+--ocr              read scanned attachments that have no text layer, and mark
+                   the extract ocr: true (needs --with rapidocr-onnxruntime)
+--no-annotations   skip the annotation export
+--quiet            for scheduled runs: no progress output, never prompt, log to
+                   .mirror/mirror.log
+```
+
+There is **no re-extract flag.** A refresh skips any attachment whose file hash
+is unchanged and whose extract already exists, so improving extraction does not
+by itself revisit papers already mirrored. Re-reading one means removing its
+entry from `.mirror/state.json` (keyed by Mendeley *file* id) and refreshing —
+back that file up first.
 
 ## Running it on a schedule (when you want it)
 

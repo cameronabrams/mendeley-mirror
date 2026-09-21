@@ -114,21 +114,38 @@ prompt in a non-interactive shell. **Cameron's approval, not a peer's**: this an
 `mendeley_push.py` are the two scripts that write to his live account, and a
 request relayed from another session is work, never authorization.
 
+**The end of the run is trustworthy, by design** (`closing_report()`, fixed in
+`0806996`): anything still stuck in `inbox/` is printed **last** so a `| tail`
+cannot miss it, the "pull the extracted text down" line appears only when
+something was actually attached, and the run exits `1` if any file was left
+unfiled. Read the tail if you like — but read the *whole* tail, and prefer the
+exit status, which is the one signal a pipe cannot swallow.
+
 **Do not delete a duplicate PDF on your own.** The documented rule is to delete
 the download rather than attach a second copy, but the file is his; report it and
 let him say so.
 
 ## 7. Refresh, minding the schedule
 
-The Windows desktop runs its own refresh at about **one minute past the hour**.
-Two refreshes at once make Syncthing conflict files in `.mirror/`.
+A refresh runs hourly on its own, and two at once make Syncthing conflict files
+in `.mirror/`. **Which machine owns that schedule is a per-machine fact that has
+changed** — as of 2026-09-08 it is a systemd user timer on the Linux host at
+**:07 past**, not the retired Windows task at :01. Check, don't assume:
 
 ```
-date -u; ls ~/Sync/mendeley/.mirror/run.lock* 2>/dev/null || echo "no locks"
-cd ~/Git/mendeley-mirror && ./run_mirror.sh
+date -u; systemctl --user list-timers mendeley-mirror.timer
+ls ~/Sync/mendeley/.mirror/run.lock* 2>/dev/null || echo "no locks"
 ```
 
-Don't start a run that could still be going at `:01`. Locks are per host
+**Where the schedule is a systemd timer, refresh by starting its service** — it
+cannot run twice at once, which is what makes this safe against the timer:
+
+```
+systemctl --user start mendeley-mirror.service
+```
+
+Calling `./run_mirror.sh` from the clone *can* overlap the timer; use it only on
+a machine with no systemd unit (Windows: `run_mirror.bat`). Locks are per host
 (`run.lock.<host>`) — your own host's lock is PID-checked, another host's is
 advisory.
 
@@ -153,9 +170,22 @@ that apply:
 - **First-page bleed.** If step 2 found a neighbor's article on page 1, that text
   is now in the extract too. Say where the real article starts, so a later grep
   hit near the top isn't misattributed.
-- **No text layer.** `extraction-report.md` lists attachments that yielded
-  nothing. A scanned paper is filed but not greppable — worth flagging, because
-  it will be invisible to every future library search.
+- **Extraction quality.** `extraction-report.md` lists every attachment whose
+  text is not plain prose, in three classes, and the class decides what the
+  extract is good for:
+  - **no text layer** — an image-only scan. It is filed but invisible to every
+    future library search until someone runs the opt-in OCR pass (`uv run --with
+    rapidocr-onnxruntime --script mendeley_mirror.py --ocr`, never part of the
+    hourly refresh). Flag it.
+  - **OCR'd** — the extract carries `ocr: true` in its front matter. It is
+    greppable and roughly 81% word-accurate: **a finding aid, never a quotable
+    source.** Say so when you report one; quotes come off the rendered page.
+  - **garbled** — a broken text layer, re-read with `pdftotext` automatically
+    since 2026-09-16. The extract says how many pages were repaired or dropped.
+
+  Two traps when reporting: a short extract may be 30 pages of one repeated
+  permission stamp (`stamp-only-extracts.tsv` lists the known ones), and a report
+  row naming `<Key>-2` is that record's *second attachment*, not a second paper.
 
 ## Reading it afterwards
 

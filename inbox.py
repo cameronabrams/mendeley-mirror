@@ -48,8 +48,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -459,8 +461,39 @@ def upload(client: Mendeley, doc_id: str, path: Path) -> str:
 
 # --------------------------------------------------------------------------
 
+REFRESH_UNIT = "mendeley-mirror.service"
+
+
+def refresh_command(which=shutil.which, run=subprocess.run) -> str:
+    """How to refresh on *this* machine, named so it cannot cause a double run.
+
+    This string is printed at the one moment the reader is most likely to obey
+    it immediately, so it must not name a command that can overlap a scheduled
+    refresh. Starting the systemd service cannot run twice at once; calling
+    run_mirror.sh directly can, and two refreshes at once make Syncthing
+    conflict files out of .mirror/. So prefer the unit wherever it is installed,
+    and fall back to the launcher only where it is not.
+
+    `which` and `run` are injectable for the tests: probing the real systemd on
+    the machine running the suite would make the result depend on the host.
+    """
+    if os.name == "nt":
+        return "run_mirror.bat"
+    systemctl = which("systemctl")
+    if systemctl:
+        try:
+            probe = run([systemctl, "--user", "list-unit-files", REFRESH_UNIT],
+                        capture_output=True, text=True, timeout=5)
+            if probe.returncode == 0 and REFRESH_UNIT in (probe.stdout or ""):
+                return f"systemctl --user start {REFRESH_UNIT}"
+        except (OSError, subprocess.SubprocessError):
+            pass  # no usable systemd: fall through to the launcher
+    return "./run_mirror.sh"
+
+
 def closing_report(attached: list[str], skipped: list[tuple[str, str]],
-                   stuck: list[tuple[str, str]], dry_run: bool = False) -> str:
+                   stuck: list[tuple[str, str]], dry_run: bool = False,
+                   refresh_cmd: str | None = None) -> str:
     """The last thing the run prints, and it must match what actually happened.
 
     Two constraints, both learned the hard way. The instruction to refresh is
@@ -473,7 +506,8 @@ def closing_report(attached: list[str], skipped: list[tuple[str, str]],
     """
     out: list[str] = []
     if attached and not dry_run:
-        out.append("Run ./run_mirror.sh to pull the extracted text down.")
+        cmd = refresh_cmd if refresh_cmd is not None else refresh_command()
+        out.append(f"Run `{cmd}` to pull the extracted text down.")
     if skipped:
         out.append(f"{len(skipped)} left in inbox/ (already had a PDF; --replace to override):")
         out += [f"      {name} -- {why}" for name, why in skipped]

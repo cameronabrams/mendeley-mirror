@@ -497,35 +497,66 @@ def main():
     import inbox
 
     # A clean run: the refresh instruction appears, and nothing else.
-    r = inbox.closing_report(["a.pdf"], [], [])
-    check("Run ./run_mirror.sh" in r, "a successful run says to refresh")
+    r = inbox.closing_report(["a.pdf"], [], [], refresh_cmd="REFRESH")
+    check("REFRESH" in r, "a successful run says to refresh")
     check("NOT filed" not in r, "a successful run reports no failures")
 
     # A failed run must NOT tell you to go pull down text that was never sent.
-    r = inbox.closing_report([], [], [("a.pdf", "upload refused (403)")])
-    check("Run ./run_mirror.sh" not in r,
+    r = inbox.closing_report([], [], [("a.pdf", "upload refused (403)")], refresh_cmd="REFRESH")
+    check("REFRESH" not in r,
           "a run that attached nothing does not tell you to refresh")
     check("NOT filed" in r and "a.pdf" in r and "403" in r,
           "the failure, the file name and the reason are all reported")
 
     # The mixed case is the dangerous one: `| tail` shows only the end, so the
     # failure has to be the LAST thing printed, after the refresh instruction.
-    r = inbox.closing_report(["good.pdf"], [], [("bad.pdf", "boom")])
-    check("Run ./run_mirror.sh" in r, "the part that worked still says to refresh")
+    r = inbox.closing_report(["good.pdf"], [], [("bad.pdf", "boom")], refresh_cmd="REFRESH")
+    check("REFRESH" in r, "the part that worked still says to refresh")
     lines = [ln for ln in r.strip().splitlines() if ln.strip()]
-    check(r.index("NOT filed") > r.index("Run ./run_mirror.sh"),
+    check(r.index("NOT filed") > r.index("REFRESH"),
           "the failure block comes after the success line, so tail shows it")
     check("bad.pdf" in "\n".join(lines[-3:]), "the failed file name survives a tail -3")
 
+
+    # Which refresh command gets printed is a safety question, not a cosmetic one:
+    # naming run_mirror.sh where the systemd unit exists invites a run that
+    # overlaps the timer, and two at once make Syncthing conflict files in
+    # .mirror/. Probing is injected so the result does not depend on this host.
+    class _P:
+        def __init__(self, rc, out): self.returncode, self.stdout = rc, out
+
+    unit = inbox.REFRESH_UNIT
+    have_unit = lambda *a, **k: _P(0, f"UNIT FILE                STATE\n{unit}  enabled\n")
+    check(inbox.refresh_command(which=lambda n: "/usr/bin/systemctl", run=have_unit)
+          == f"systemctl --user start {unit}",
+          "with the unit installed, it names the service, which cannot double-start")
+
+    no_unit = lambda *a, **k: _P(0, "UNIT FILE   STATE\n")
+    check(inbox.refresh_command(which=lambda n: "/usr/bin/systemctl", run=no_unit)
+          == "./run_mirror.sh",
+          "systemd present but no unit falls back to the launcher")
+
+    check(inbox.refresh_command(which=lambda n: None, run=have_unit) == "./run_mirror.sh",
+          "no systemctl at all falls back to the launcher")
+
+    def _boom(*a, **k): raise OSError("systemd is not running")
+    check(inbox.refresh_command(which=lambda n: "/usr/bin/systemctl", run=_boom)
+          == "./run_mirror.sh",
+          "a systemctl that errors must not take the whole run down with it")
+
+    check("run_mirror.sh" in inbox.closing_report(["a.pdf"], [], [],
+          refresh_cmd="./run_mirror.sh"),
+          "an injected command is what gets printed")
+
     # Skipped files are left in the inbox too, and saying so is not an error.
-    r = inbox.closing_report(["a.pdf"], [("b.pdf", "Key2020Word already has a PDF")], [])
+    r = inbox.closing_report(["a.pdf"], [("b.pdf", "Key2020Word already has a PDF")], [], refresh_cmd="REFRESH")
     check("--replace" in r and "b.pdf" in r, "a skipped file is reported with the escape hatch")
     check("NOT filed" not in r, "a skipped file is not counted as a failure")
 
     check(inbox.closing_report([], [], [], dry_run=True) == "",
           "a clean dry run prints no closing block")
-    r = inbox.closing_report([], [], [("a.pdf", "cannot identify: no DOI")], dry_run=True)
-    check("Run ./run_mirror.sh" not in r and "a.pdf" in r,
+    r = inbox.closing_report([], [], [("a.pdf", "cannot identify: no DOI")], dry_run=True, refresh_cmd="REFRESH")
+    check("REFRESH" not in r and "a.pdf" in r,
           "a dry run reports what it could not identify but never says to refresh")
 
     print("\ninbox: an empty download is not a scan")
