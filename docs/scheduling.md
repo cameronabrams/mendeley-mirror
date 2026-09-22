@@ -44,7 +44,7 @@ something.
 ## Running it on a schedule (when you want it)
 
 ```
-schtasks /create /tn "Mendeley mirror" /tr "\"%USERPROFILE%\Git\mendeley-mirror\run_mirror.bat\"" /sc daily /st 06:30
+schtasks /create /tn "Mendeley mirror" /tr "\"%USERPROFILE%\Git\offprint\run_mirror.bat\"" /sc daily /st 06:30
 ```
 
 Drop `pause` from the .bat first, or the window will sit there waiting for a

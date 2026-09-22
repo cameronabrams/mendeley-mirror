@@ -1,4 +1,4 @@
-# Mendeley mirror
+# offprint
 
 Keeps a plain-folder copy of your Mendeley library so that Claude — or LaTeX, or
 `grep`, or anything else — can read it without needing Mendeley itself.
@@ -7,7 +7,7 @@ The tool and the library it writes are two separate directories. This repo is
 the tool; nothing in it is generated, and it can be cloned anywhere.
 
 ```
-mendeley-mirror/               ← this repo, clone it where you like
+offprint/                      ← this repo, clone it where you like
 ├── mendeley_mirror.py     the script
 ├── get_pdf.py             pull one paper's real PDF when the text isn't enough
 ├── refs.py                what a paper cites, and which of those you already have

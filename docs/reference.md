@@ -72,7 +72,7 @@ then a `pdftotext` fallback for garbled text layers — and an extract carries n
 sign of which rules produced it. So the version is recorded where a reader will
 actually find it:
 
-- `mirror-status.md` says `written by mendeley-mirror X.Y.Z` beside the run times.
+- `mirror-status.md` says `written by offprint X.Y.Z` beside the run times.
 - `.mirror/state.json` carries `mirror_version` alongside `last_run`.
 - `mendeley_mirror.py --version` prints it.
 

@@ -57,7 +57,7 @@ except ImportError as exc:  # pragma: no cover
     sys.exit(f"pdbxref.py must sit beside the other mirror scripts ({exc})")
 
 API = "https://data.rcsb.org/graphql"
-UA = "mendeley-mirror pdbxref (mailto:cfa22@drexel.edu)"
+UA = "offprint pdbxref (mailto:cfa22@drexel.edu)"
 QUERY = ("{entries(entry_ids:[%s]){rcsb_id struct{title} "
          "rcsb_primary_citation{pdbx_database_id_DOI pdbx_database_id_PubMed "
          "title year journal_abbrev} "

@@ -87,7 +87,7 @@ layer.
 ## 5. Dry run, and read what it resolved
 
 ```
-cd ~/Git/mendeley-mirror && uv run --script inbox.py --dry-run
+cd ~/Git/offprint && uv run --script inbox.py --dry-run
 ```
 
 It reports each file as `new to the library` or `already in the library as

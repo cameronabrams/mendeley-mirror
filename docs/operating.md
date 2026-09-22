@@ -6,7 +6,7 @@ and almost every operational rule here follows from that one fact.
 ## The clone is replaceable; the library is not
 
 ```
-~/Git/mendeley-mirror     the tool      replaceable — `git pull` is the update mechanism
+~/Git/offprint     the tool      replaceable — `git pull` is the update mechanism
 ~/Sync/mendeley           the library   generated, but expensive to regenerate
 ```
 

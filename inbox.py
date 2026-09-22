@@ -80,7 +80,7 @@ FILE_CT = "application/vnd.mendeley-file.1+json"
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"']+", re.I)
 
 CLOSERS = {")": "(", "]": "[", "}": "{", ">": "<"}
-UA = "mendeley-mirror inbox.py (mailto:cfa22@drexel.edu)"
+UA = "offprint inbox.py (mailto:cfa22@drexel.edu)"
 
 STOP = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on",
         "or", "the", "to", "with", "its", "their", "using", "via"}

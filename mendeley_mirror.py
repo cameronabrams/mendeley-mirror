@@ -1328,7 +1328,7 @@ def write_status(out: Path, ok: bool, started: datetime, error: str = "") -> Non
         "",
         f"- last attempt: {now} — **{'ok' if ok else 'FAILED'}** ({took/60:.1f} min)",
         f"- last successful run: {last_ok}",
-        f"- written by mendeley-mirror {__version__}",
+        f"- written by offprint {__version__}",
         "",
     ]
     if not ok:
@@ -1371,7 +1371,7 @@ def main() -> int:
     ap.add_argument("--reauth", action="store_true", help="discard saved tokens and log in again")
     ap.add_argument("--reconfigure", action="store_true",
                     help="re-enter the application ID, secret, and redirect URL")
-    ap.add_argument("--version", action="version", version=f"mendeley-mirror {__version__}")
+    ap.add_argument("--version", action="version", version=f"offprint {__version__}")
     ap.add_argument("--quiet", action="store_true",
                     help="for scheduled runs: no progress output, never prompt, "
                          "log to .mirror/mirror.log")

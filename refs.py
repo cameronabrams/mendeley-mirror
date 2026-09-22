@@ -61,7 +61,7 @@ except ImportError:
     sys.exit("refs.py must sit in the same folder as mendeley_mirror.py")
 
 CROSSREF = "https://api.crossref.org/works/"
-UA = "mendeley-mirror refs.py (mailto:cfa22@drexel.edu)"
+UA = "offprint refs.py (mailto:cfa22@drexel.edu)"
 
 # Words too common to count as evidence that two titles are the same work.
 STOP = {

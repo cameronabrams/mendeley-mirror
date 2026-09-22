@@ -108,6 +108,35 @@ re-check. Two real failures this month came out of that set.
 
 ---
 
+## Renamed, and what still carries the old name
+
+The project became **offprint** on 2026-09-21, in anticipation of Zotero: a module
+called `mendeley_mirror` that also talks to Zotero would be actively misleading.
+An offprint is a separately printed copy of one article, pulled from the issue and
+kept — which is what this produces, and what survives when the service does not.
+
+Changed: the GitHub repository, the clone directory, the documentation, and the
+name the tool prints in `mirror-status.md` and `--version`.
+
+**Still called mendeley-mirror, deliberately:**
+
+- `~/.config/mendeley-mirror` and `~/.cache/mendeley-mirror`. Renaming these
+  loses the saved credentials and the PDF cache unless a migration is written;
+  `mirror_state_dir()` already carries one such migration, which is the going
+  rate. Invisible to users, so the cost buys nothing.
+- The systemd unit `mendeley-mirror.service`/`.timer`, which is referenced from
+  the file-inbox skill, the library's own CLAUDE.md, and `inbox.py`'s
+  `REFRESH_UNIT`. Renaming it is a stop/disable/enable dance on the one job that
+  must not silently stop.
+- The Read the Docs project, so the published URL is still
+  mendeley-mirror.readthedocs.io. Renaming it there changes a URL the README
+  advertises.
+- `mendeley_mirror.py` and the `from mendeley_mirror import` in eight scripts.
+  **This one is deferred on purpose:** it belongs in the same change as the
+  backend abstraction in item 1, so there is one refactor rather than two.
+  `mendeley_push.py` and `mendeley_edit.py` keep their names permanently — they
+  write to Mendeley specifically, and that stays true.
+
 ## Deliberately not doing
 
 **Packaging (PyPI, conda-forge, console entry points).** The PEP 723 headers
