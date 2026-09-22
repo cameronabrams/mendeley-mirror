@@ -33,5 +33,7 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 html_theme = "furo"
-html_static_path = []
+html_static_path = ["_static"]
+html_logo = "_static/offprint-icon.png"
+html_favicon = "_static/offprint-favicon.ico"
 html_title = f"offprint {release}"

@@ -1,5 +1,10 @@
 # offprint
 
+```{image} _static/offprint-banner.jpg
+:alt: offprint
+:width: 100%
+```
+
 Keeps a plain-folder copy of your Mendeley library so that Claude — or LaTeX, or
 `grep`, or anything else — can read it without needing Mendeley itself.
 
