@@ -496,6 +496,51 @@ def main():
     print("\ninbox closing report")
     import inbox
 
+    # THE CACHE OVERWRITE. inbox.py named the cached copy after the citation key
+    # alone, so a second attachment on the same record -- Supporting Information,
+    # a corrigendum -- landed on top of the first. Nothing crashed; get_pdf.py then
+    # served the SI to anyone who asked for the article.
+    _cd = tempfile.mkdtemp()
+    try:
+        cache, inboxdir = Path(_cd) / "cache", Path(_cd) / "in"
+        cache.mkdir(); inboxdir.mkdir()
+        article = cache / "Khare2018Quantitative.pdf"
+        article.write_bytes(b"THE ARTICLE, twelve pages of it")
+
+        si = inboxdir / "si.pdf"; si.write_bytes(b"the supporting information")
+        got = inbox.cache_target(cache, "Khare2018Quantitative", si)
+        check(got.name == "Khare2018Quantitative-2.pdf",
+              f"a second attachment is suffixed, not written over the first (got {got.name})")
+        check(article.read_bytes() == b"THE ARTICLE, twelve pages of it",
+              "and the first file still holds the article")
+
+        # Re-filing the very same bytes is not a second attachment.
+        same = inboxdir / "again.pdf"; same.write_bytes(b"THE ARTICLE, twelve pages of it")
+        check(inbox.cache_target(cache, "Khare2018Quantitative", same) == article,
+              "an identical file reuses its name rather than piling up copies")
+
+        # A third distinct one keeps counting.
+        (cache / "Khare2018Quantitative-2.pdf").write_bytes(b"the supporting information")
+        third = inboxdir / "third.pdf"; third.write_bytes(b"a corrigendum")
+        check(inbox.cache_target(cache, "Khare2018Quantitative", third).name
+              == "Khare2018Quantitative-3.pdf", "and a third distinct file gets -3")
+
+        # The read side, independently: a cache hit is checked against the page
+        # count the mirror's own extract records, which needs no network.
+        import get_pdf
+        mirror = Path(_cd) / "mirror"; (mirror / "text").mkdir(parents=True)
+        (mirror / "text" / "Khare2018Quantitative.md").write_text(
+            "".join(f"<!-- p. {n} -->\nbody\n" for n in range(1, 13)), encoding="utf-8")
+        check(get_pdf.extract_pages(mirror, "Khare2018Quantitative") == 12,
+              "the extract's page markers give the expected page count")
+        check(get_pdf.extract_pages(mirror, "NeverHeardOf2020") == 0,
+              "and an unknown key gives zero rather than raising")
+
+        check(get_pdf.cache_is_the_right_paper(article, mirror, "NoExtract2020") is True,
+              "with no extract to compare against, a cache hit is served (unknowable, not wrong)")
+    finally:
+        shutil.rmtree(_cd, ignore_errors=True)
+
     # A garbled text layer must be repaired here exactly as a refresh repairs it.
     # It was not, and the asymmetry was expensive: a correctly named paper could
     # not be identified from its own first page, while the same file once filed

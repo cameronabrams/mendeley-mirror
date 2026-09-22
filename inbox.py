@@ -47,6 +47,7 @@ It asks before sending unless you pass --yes.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -554,6 +555,34 @@ def refresh_command(which=shutil.which, run=subprocess.run) -> str:
     return "./run_mirror.sh"
 
 
+def cache_target(dest: Path, stem: str, src: Path) -> Path:
+    """Where to park this PDF without destroying one already there.
+
+    The cache was named for the citation key alone, so a SECOND attachment on the
+    same record -- Supporting Information, a corrigendum, a scanned appendix --
+    overwrote the first. The article was replaced by its SI under the article's
+    own name, and get_pdf.py then served that to anyone who asked for the paper.
+    Nothing crashed, which is what made it dangerous.
+
+    So mirror what the extractor already does with text/<key>-2.md: the first file
+    keeps the bare stem and the rest are suffixed. A byte-identical file is not a
+    second attachment -- it is the same one being filed again, so reuse its name
+    rather than accumulating copies.
+    """
+    first = dest / f"{stem}.pdf"
+    if not first.exists():
+        return first
+    digest = hashlib.sha256(src.read_bytes()).hexdigest()
+    n = 1
+    while True:
+        cand = first if n == 1 else dest / f"{stem}-{n}.pdf"
+        if not cand.exists():
+            return cand
+        if hashlib.sha256(cand.read_bytes()).hexdigest() == digest:
+            return cand          # already cached, same bytes: keep one copy
+        n += 1
+
+
 def closing_report(attached: list[str], skipped: list[tuple[str, str]],
                    stuck: list[tuple[str, str]], dry_run: bool = False,
                    refresh_cmd: str | None = None) -> str:
@@ -676,12 +705,12 @@ def main() -> int:
                 # file's own name -- a sidecar-identified report has neither of
                 # the first two, and an empty stem would give a nameless file.
                 stem = key or re.sub(r"[^A-Za-z0-9]", "_", doi) or path.stem
-                target = dest / f"{stem}.pdf"
+                target = cache_target(dest, stem, path)
                 shutil.move(str(path), target)
                 print(f"    moved out of the inbox to {target}")
                 side = path.with_suffix(".json")
                 if side.exists():
-                    shutil.move(str(side), dest / f"{stem}.json")
+                    shutil.move(str(side), target.with_suffix(".json"))
         except Exception as exc:
             print(f"  ! {path.name}: {exc}")
             stuck.append((path.name, str(exc)))

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["requests>=2.31"]
+# dependencies = ["requests>=2.31", "pymupdf>=1.24"]   # pymupdf only to page-count a cached PDF
 # ///
 """
 get_pdf.py -- pull one paper's actual PDF out of Mendeley, on demand.
@@ -64,6 +64,48 @@ def search_index(out: Path, needle: str) -> list[tuple[str, str]]:
             cells = [c.strip() for c in line.strip("|").split("|")]
             hits.append((cells[0].strip("`"), " · ".join(cells[1:4])))
     return hits
+
+
+def extract_pages(out: Path, key: str) -> int:
+    """How many pages the mirror's own extract says this paper has, or 0.
+
+    The extract is written from the SAME attachment get_pdf serves, so its
+    `<!-- p. N -->` markers are a local, offline record of the page count. That
+    makes it the cheapest possible check on a cache hit, and it needs no network
+    and no credentials -- which matters, because serving a cached PDF without
+    authenticating is a deliberate property of this script.
+    """
+    extract = out / "text" / f"{key}.md"
+    if not extract.exists():
+        return 0
+    return len(re.findall(r"<!-- p\. \d+ -->", extract.read_text(encoding="utf-8",
+                                                                errors="replace")))
+
+
+def cache_is_the_right_paper(target: Path, out: Path, key: str) -> bool:
+    """Is the cached file plausibly the paper asked for, or something else?
+
+    A cache hit used to be served on the strength of existing and being non-empty.
+    When inbox.py cached a second attachment over the first, `get_pdf.py <key>`
+    returned the Supporting Information under the article's name: right key, right
+    file name, wrong document, no warning. Nobody re-checks a cache hit, so it
+    would have stood until a human noticed the page count -- which is exactly the
+    check being made here.
+
+    Unknowable cases pass. No extract, no markers, no pymupdf: this cannot tell,
+    and refusing to serve a file because it could not be verified would break the
+    offline path for every scan in the library.
+    """
+    want = extract_pages(out, key)
+    if not want:
+        return True
+    try:
+        import pymupdf
+        with pymupdf.open(target) as doc:
+            have = doc.page_count
+    except Exception:
+        return True
+    return have == want
 
 
 def doi_filed(out: Path, dest: Path, key: str) -> Path | None:
@@ -152,10 +194,15 @@ def main() -> int:
                 stray.rename(target)
                 print(f"(adopted {stray.name}, filed before {key} had a key)", file=sys.stderr)
         if target.exists() and target.stat().st_size > 0:
-            print(target)
-            if args.open_after:
-                open_locally(target)
-            continue
+            if cache_is_the_right_paper(target, out, key):
+                print(target)
+                if args.open_after:
+                    open_locally(target)
+                continue
+            quarantine = target.with_name(f"{target.stem}-unexpected{target.suffix}")
+            target.rename(quarantine)
+            print(f"! {key}: the cached PDF has the wrong number of pages for this "
+                  f"paper -- moved to {quarantine.name} and re-fetching", file=sys.stderr)
         wanted.append((key, doc_id, target))
 
     if not wanted:
