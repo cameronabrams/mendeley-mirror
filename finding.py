@@ -102,6 +102,14 @@ EDGE_CHARS = 160
 # place". Wide enough for a ragged last line, narrow enough that a figure number
 # does not cluster with itself by chance.
 POSITION_BAND = 120
+# The same tolerance counted in lines. A character count is a lossy proxy for
+# "the same place on the page": Knight2015Memgen prints its running head two
+# lines from the end of every page, but a citation block on the title page puts
+# that head 278 characters from the end against 140 on the last page -- one
+# layout, two numbers, 138 apart. Lines say what the characters were standing in
+# for. Two is the knee: widening to three buys six more papers across the
+# library and makes the rule looser for all of them.
+LINE_BAND = 2
 
 
 def page_text(extract: str, page: int) -> str | None:
@@ -215,46 +223,60 @@ def confirm_offset(extract: str, page: int, journal_page: int) -> int | None:
     scan's 88% -- and a wrong locator is the failure that gets copied into a
     manuscript. As a test of a number a person already asserted it cannot invent
     anything: the hypothesis comes from the human, the evidence from the page.
+
+    As a confirmer, measured over the 2402 extracts of three pages or more with a
+    first page in library.bib: it accepts the true first page for 1861 of them,
+    and accepts a deliberately wrong claim (first page + 7) for one. Counting
+    lines as well as characters is what took the first number from 1807; the
+    second did not move, and is Strukil2020Highly either way.
     """
     pp = _page_bodies(extract)
     if len(pp) < 3:
         return None
     off = journal_page - page
-    positions: list[tuple[int, int]] = []       # (marker page, distance from end)
-    starts: list[tuple[int, int]] = []          # (marker page, distance from start)
+    # Four readings of "the same place", because no one of them holds for every
+    # layout: characters from either end of the page, and lines from either end.
+    from_end: list[tuple[int, int]] = []        # (marker page, characters from end)
+    from_start: list[tuple[int, int]] = []      # (marker page, characters from start)
+    lines_from_end: list[tuple[int, int]] = []  # (marker page, lines from end)
+    lines_from_start: list[tuple[int, int]] = []
     for n, body in pp:
         want = str(n + off)
         if not want.lstrip("-").isdigit():
             continue
-        for m in re.finditer(r"(?<![\d.-])" + re.escape(want) + r"(?![\d.])", body):
-            # A running head sits at a line boundary -- alone on its line, or at
-            # the start or end of the header line. "Figure 8 shows the trend" does
-            # not, and a figure number that happens to track the page number is
-            # otherwise indistinguishable from a footer: it recurs, and on a
-            # regularly laid out paper it recurs at a consistent position too.
-            line_start = body.rfind("\n", 0, m.start()) + 1
-            line_end = body.find("\n", m.end())
-            line_end = len(body) if line_end == -1 else line_end
-            at_edge = (not body[line_start:m.start()].strip()
-                       or not body[m.end():line_end].strip())
-            if not at_edge:
-                continue
-            positions.append((n, len(body) - m.end()))
-            starts.append((n, m.start()))
+        lines = body.split("\n")
+        at = 0                                  # character offset of the line start
+        for i, line in enumerate(lines):
+            for m in re.finditer(r"(?<![\d.-])" + re.escape(want) + r"(?![\d.])", line):
+                # A running head sits at a line boundary -- alone on its line, or at
+                # the start or end of the header line. "Figure 8 shows the trend" does
+                # not, and a figure number that happens to track the page number is
+                # otherwise indistinguishable from a footer: it recurs, and on a
+                # regularly laid out paper it recurs at a consistent position too.
+                if line[:m.start()].strip() and line[m.end():].strip():
+                    continue
+                from_end.append((n, len(body) - (at + m.end())))
+                from_start.append((n, at + m.start()))
+                lines_from_end.append((n, len(lines) - 1 - i))
+                lines_from_start.append((n, i))
+            at += len(line) + 1                 # the newline split() removed
 
-    def clustered(occ: list[tuple[int, int]]) -> int:
-        """Most distinct pages whose occurrence falls inside one 120-char band."""
+    def clustered(occ: list[tuple[int, int]], band: int) -> int:
+        """Most distinct pages whose occurrence falls inside one band."""
         if not occ:
             return 0
         occ = sorted(occ, key=lambda x: x[1])
         best = lo = 0
         for hi in range(len(occ)):
-            while occ[hi][1] - occ[lo][1] > POSITION_BAND:
+            while occ[hi][1] - occ[lo][1] > band:
                 lo += 1
             best = max(best, len({pg for pg, _ in occ[lo:hi + 1]}))
         return best
 
-    support = max(clustered(positions), clustered(starts))
+    support = max(clustered(from_end, POSITION_BAND),
+                  clustered(from_start, POSITION_BAND),
+                  clustered(lines_from_end, LINE_BAND),
+                  clustered(lines_from_start, LINE_BAND))
     return support if support >= max(3, int(0.6 * len(pp))) else None
 
 

@@ -1067,13 +1067,36 @@ def main():
           "a number at a different place on every page confirms nothing")
 
     # And the tolerance is a real number, not a wish: a head that wanders further
-    # than POSITION_BAND between pages is not treated as the same place.
+    # than the bands between pages is not treated as the same place. The wander
+    # has to be real in BOTH readings -- the body wraps onto more lines as it
+    # grows, the way a text layer actually does, so the number moves in lines as
+    # well as in characters. An earlier version of this decoy put the whole body
+    # on one long line, which drifted the characters while pinning the number to
+    # line 3 of every page -- that is a running head, and was passing only
+    # because nothing yet counted lines.
     DRIFT = "".join(
-        f"<!-- p. {n} -->\n\n{'body. ' * (10 + 25 * n)}\n{1926 + n}\n"
-        f"{'tail padding. ' * (2 + 20 * n)}\n\n"
+        f"<!-- p. {n} -->\n\n" + "body.\n" * (10 + 25 * n) + f"{1926 + n}\n"
+        + "tail padding.\n" * (2 + 20 * n) + "\n"
         for n in range(1, 13))
     check(fnd.confirm_offset(DRIFT, 8, 1934) is None,
           "a page number that drifts far between pages is not a running head")
+
+    # The converse, and why LINE_BAND exists. Knight2015Memgen prints its running
+    # head two lines from the end of all three pages, but the title page carries a
+    # citation block below it, so the character distance reads 278 there against
+    # 140 on the last page. One layout, two numbers, further apart than
+    # POSITION_BAND -- and the operator's correct page number was refused.
+    HEAD = "".join(
+        f"<!-- p. {n} -->\n\n" + "body sentence.\n" * 20
+        + f"{2896 + n} Knight and Hub\n"
+        + "Downloaded from https://academic.oup.com/example by a user\n"
+        + ("Bioinformatics, 31(17), 2015, 2897-2899 doi: 10.1093/example\n" if n == 1 else "")
+        + "\n"
+        for n in range(1, 4))
+    check(fnd.confirm_offset(HEAD, 2, 2898) is not None,
+          "a running head at a steady LINE is confirmed though the characters drift")
+    check(fnd.confirm_offset(HEAD, 2, 2899) is None,
+          "and that reading still refuses an off-by-one claim")
 
     print("\nPEP 723 headers: ten copies of the dependency list, kept honest")
 
