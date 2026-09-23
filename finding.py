@@ -160,6 +160,12 @@ def derive_offset(extract: str) -> tuple[int, int] | None:
 
     Returning None is a real answer, not a failure: Georjon1997Molecular prints its
     running head where extraction puts it mid-page, and no edge window finds it.
+
+    What those two corrections COST was not measured at the time, and should have
+    been: 137 papers that derived correctly before them now refuse, against 99
+    wrong derivations removed. confirm_offset reaches 120 of the 137 once an
+    operator supplies the number. ROADMAP item 4 carries the re-measurement, on a
+    larger corpus than the 2129 quoted above, and the seventeen still uncovered.
     """
     marks = [(m.start(), m.end(), int(m.group(1)))
              for m in re.finditer(r"<!-- p\. (\d+) -->", extract)]

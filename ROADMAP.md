@@ -95,16 +95,40 @@ evidence that it works, and the test suite needs no credentials and no network.
 
 ## 4. Better page-offset derivation
 
-**Why.** Measured against the 2,129 extracts whose bib entry records a numeric
-first page, the edge scan is right on 1,703, **wrong on 227**, and refuses 199.
-Every one of those 227 is a plausible-looking journal page that nobody will
-re-check. Two real failures this month came out of that set.
+**Why.** Re-measured 2026-09-23 against the 2,425 extracts whose bib entry
+records a numeric first page — a larger set than the 2,129 the `derive_offset`
+docstring quotes, because the library has grown, so the two are not directly
+comparable. The edge scan derives 2,109 offsets: **1,789 right, 320 wrong**, and
+refuses 316. Every one of those 320 is a plausible-looking journal page that
+nobody will re-check.
 
-- [ ] Use the positional scan (`confirm_offset`) on the 199 refusals in some way
-      that does not import its 70% precision into unattended records — a second
-      opinion that must agree with the first, rather than a fallback.
+**What the 09-21 tie-refusal cost, which was never measured at the time.**
+Before `d902a36` the scan derived 2,322: 1,903 right and 419 wrong. So that fix
+removed 99 wrong derivations and 114 correct ones — precision 82.0% → 84.8%,
+and **137 papers that used to derive correctly now refuse**. The trade is
+defensible (a refusal is loud, a wrong locator is silent and gets copied into a
+manuscript) but it was made blind, and `literature` found it as a regression
+against a locator its own findings file already carried: `Knight2015Memgen`,
+derived +2896 on 09-09, refused on 09-23.
+
+Of those 137, `confirm_offset` accepts the true first page for **120** once the
+operator passes `--journal-page`. Seventeen still need a hand-recorded locator.
+
+- [ ] Recover the 17 the confirm path cannot reach.
 - [ ] Treat the bib page range as evidence when the record has one. The
-      derivation currently ignores a number the library already knows.
+      derivation currently ignores a number the library already knows — and it
+      is the cheap oracle that would have caught this regression on the day.
+- [ ] Regression corpus: a locator a findings file already carries is ground
+      truth that costs nothing to collect. `literature` proposed it; it belongs
+      in the library session's hands, since that is where the findings live.
+
+**Measured and rejected 2026-09-23:** widening the edge window from characters
+to whole lines (first and last *n* non-blank lines, in addition to
+`EDGE_CHARS`). It recovers real papers — 1,880 correct at *n*=2 against 1,789 —
+but carries 368 wrong against 320, so precision falls to 83.6%. Deriving is the
+silent path; buying recall with precision there is backwards. The same insight
+*was* a clean win in `confirm_offset` (`53cedcc`), where the human supplies the
+hypothesis and the wrong-claim rate did not move at all.
 
 ---
 
