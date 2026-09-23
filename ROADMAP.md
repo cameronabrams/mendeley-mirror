@@ -118,9 +118,24 @@ operator passes `--journal-page`. Seventeen still need a hand-recorded locator.
 - [ ] Treat the bib page range as evidence when the record has one. The
       derivation currently ignores a number the library already knows — and it
       is the cheap oracle that would have caught this regression on the day.
-- [ ] Regression corpus: a locator a findings file already carries is ground
-      truth that costs nothing to collect. `literature` proposed it; it belongs
-      in the library session's hands, since that is where the findings live.
+- [x] Regression corpus — **built and run 2026-09-23 by `literature`**, which
+      proposed it. Every `## N · FINDING ·` record in its `findings/*.md` carries
+      a (citekey, marker page, printed page) tuple checked by hand when it was
+      written: 98 records across 57 files, an oracle this tool did not generate.
+      Replayed against `53cedcc`: 89 agree, 4 disagree, **0 lost, 0 gained**, 5
+      bare-marker records with nothing to compare. No paper that carried a
+      printed page lost one.
+
+      All four disagreements are papers the 09-21 hand audit had already caught
+      and retracted — Ikeno2011Molecular, Lin1999Effect, Hamerton1996Molecular,
+      Kendrick1990Calculated. Four of four known positives, zero false alarms,
+      and the first time the code and that audit name the same four papers.
+
+      It lives in the library session because that is where the findings are.
+      This repo's own suite cannot replace it: `test_mirror.py` fixtures are
+      written by whoever writes the code, and three of them this month encoded
+      an assumption rather than a fact. An oracle built by the tool's *user*,
+      before the change existed, is the only kind that can contradict it.
 
 **Measured and rejected 2026-09-23:** widening the edge window from characters
 to whole lines (first and last *n* non-blank lines, in addition to
