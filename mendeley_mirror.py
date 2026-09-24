@@ -1308,7 +1308,120 @@ def write_log(mirror_dir: Path) -> None:
         pass
 
 
-def write_status(out: Path, ok: bool, started: datetime, error: str = "") -> None:
+# A rejected login and a dropped connection both end the run, and until now both
+# printed the same thing. They mean opposite things: one clears by itself, the
+# other never does and is the signal to migrate.
+AUTH_MARKERS = (
+    "refresh token rejected",
+    "token exchange failed",
+    "authorization failed",
+    "state mismatch",
+    "needs a person at the keyboard",
+    "timed out waiting for the browser redirect",
+    "invalid_grant",
+    "invalid_client",
+    "401",
+    # An empty library from an account that is not empty means the credentials are
+    # no longer seeing the account. The token still works; what it reaches is gone.
+    # This is the shape a downgraded or lapsed account takes, so it routes to the
+    # same advice as a rejected login rather than to "unknown".
+    "try --reauth",
+    "no documents returned",
+)
+NETWORK_MARKERS = (
+    "could not reach",
+    "connectionerror",
+    "connecttimeout",
+    "readtimeout",
+    "max retries",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "connection reset",
+    "connection refused",
+)
+
+
+def classify_failure(detail: str) -> str:
+    """'auth', 'network', 'interrupted' or 'other', from the message main() records.
+
+    Order matters. "Could not reach https://api.mendeley.com/oauth/token" is a
+    NETWORK failure that happens to name the token endpoint, and reading it as an
+    authentication problem would send a person to re-authorize over a connection
+    that is not there. So the network markers are tested first, and they are
+    phrases about reaching a host rather than words like "token".
+    """
+    low = detail.lower()
+    if "keyboardinterrupt" in low:
+        return "interrupted"
+    if any(m in low for m in NETWORK_MARKERS):
+        return "network"
+    if any(m in low for m in AUTH_MARKERS):
+        return "auth"
+    return "other"
+
+
+KIND_NAMES = {
+    "auth": "authentication",
+    "network": "network",
+    "interrupted": "interrupted",
+    "other": "unknown",
+}
+
+
+def record_health(mirror_dir: Path, ok: bool, kind: str = "", now: str = "") -> dict:
+    """Update and return the run-health record in .mirror/health.json.
+
+    Kept out of state.json deliberately: that file's shape is a contract other
+    people's tooling reads, and a counter that changes on every failed run has no
+    business in it. This one is additive and nothing else depends on it.
+    """
+    now = now or datetime.now(timezone.utc).isoformat()
+    path = mirror_dir / "health.json"
+    h = load_json(path, {})
+    if ok:
+        h = {"consecutive_failures": 0, "last_success": now, "last_attempt": now}
+    else:
+        n = int(h.get("consecutive_failures", 0)) + 1
+        h = {
+            "consecutive_failures": n,
+            # the first failure of THIS streak, so a long outage reads as one
+            "failing_since": h.get("failing_since") or now,
+            "last_kind": kind,
+            "last_attempt": now,
+            "last_success": h.get("last_success", ""),
+        }
+    save_json(path, h)
+    return h
+
+
+def failure_advice(kind: str, streak: int) -> list[str]:
+    """What the reader should do about it, which is different for each kind."""
+    if kind == "auth":
+        return [
+            "**This is an authentication failure, not a network problem.** The saved",
+            "tokens were not accepted. Nothing here will update until a person runs",
+            "`mendeley_mirror.py` by hand and logs in again.",
+            "",
+            "If logging in by hand also fails, API access itself is gone. That is the",
+            "signal to migrate, not something to wait out — see ROADMAP item 1.",
+        ]
+    if kind == "network":
+        out = ["This looks like a network failure rather than a rejected login, so it",
+               "may well clear by itself."]
+        if streak >= 3:
+            out += ["", f"It has not cleared in {streak} consecutive attempts, though, which is",
+                    "long enough to stop assuming it will."]
+        return out
+    if kind == "interrupted":
+        return ["The run was interrupted rather than failing on its own. Nothing is",
+                "wrong with the account or the connection; the refresh simply did not",
+                "finish."]
+    return ["The cause is not one this tool recognizes. The message above is the",
+            "whole of what it knows; `.mirror/mirror.log` has the run around it."]
+
+
+def write_status(out: Path, ok: bool, started: datetime, error: str = "",
+                 kind: str = "", health: dict | None = None) -> None:
     """Rewritten on every attempt, success or failure.
 
     A failed run leaves index.md untouched, which would otherwise make a mirror
@@ -1323,19 +1436,30 @@ def write_status(out: Path, ok: bool, started: datetime, error: str = "") -> Non
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     last_ok = now if ok else prev.get("last_ok", "never")
     took = (datetime.now(timezone.utc) - started).total_seconds()
+    label = "ok" if ok else f"FAILED: {KIND_NAMES.get(kind, 'unknown')}"
     lines = [
         "# Mirror status",
         "",
-        f"- last attempt: {now} — **{'ok' if ok else 'FAILED'}** ({took/60:.1f} min)",
+        f"- last attempt: {now} — **{label}** ({took/60:.1f} min)",
         f"- last successful run: {last_ok}",
-        f"- written by offprint {__version__}",
-        "",
     ]
+    streak = int((health or {}).get("consecutive_failures", 0))
+    if not ok and streak:
+        since = (health or {}).get("failing_since", "")
+        # "failed once" and "has not worked in nine days" must not read alike
+        plural = "" if streak == 1 else "s"
+        line = f"- **{streak} consecutive failure{plural}**"
+        if since:
+            line += f", the first at {since[:16].replace('T', ' ')} UTC"
+        lines.append(line)
+    lines += [f"- written by offprint {__version__}", ""]
     if not ok:
         lines += [
             "The last refresh did not finish, so everything else in this folder is",
             "as of the last successful run above — treat it as possibly stale, and",
             "say so if it matters to the answer.",
+            "",
+        ] + failure_advice(kind, streak) + [
             "",
             "```",
             error.strip()[:800],
@@ -1387,22 +1511,33 @@ def main() -> int:
         write_log(mirror_dir)
         return 0  # not an error: the other run is doing the work
 
+    def failed(detail: str) -> None:
+        kind = classify_failure(detail)
+        note(f"refresh failed ({KIND_NAMES[kind]}): {detail}")
+        health = record_health(mirror_dir, False, kind)
+        if health["consecutive_failures"] > 1:
+            note(f"  this is failure {health['consecutive_failures']} in a row, "
+                 f"since {health.get('failing_since', '?')}")
+        write_status(out, False, started, detail, kind, health)
+        write_log(mirror_dir)
+        lock.unlink(missing_ok=True)
+
     try:
         rc = run(args, out, mirror_dir)
     except SystemExit as exc:  # sys.exit() from the auth paths
-        note(str(exc))
-        write_status(out, False, started, str(exc))
-        write_log(mirror_dir)
-        lock.unlink(missing_ok=True)
+        failed(str(exc))
         raise
     except BaseException as exc:  # includes Ctrl-C: record it, then re-raise
-        detail = f"{type(exc).__name__}: {exc}"
-        note(detail)
-        write_status(out, False, started, detail)
-        write_log(mirror_dir)
-        lock.unlink(missing_ok=True)
+        failed(f"{type(exc).__name__}: {exc}")
         raise
-    write_status(out, rc == 0, started)
+    if rc == 0:
+        write_status(out, True, started, health=record_health(mirror_dir, True))
+    else:
+        # run() returned non-zero without raising: it already said why in the log
+        # run() has already said why in the log; carry its last word into the
+        # status file, or the reader gets an exit code and nothing else.
+        failed(f"the refresh reported failures (exit {rc}). {LOG[-1] if LOG else ''}".strip())
+        return rc
     write_log(mirror_dir)
     lock.unlink(missing_ok=True)
     return rc

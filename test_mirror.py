@@ -457,10 +457,85 @@ def main():
 
     mm.write_status(sout, False, t0, "HTTPError: 500 from /documents")
     st = (sout / "mirror-status.md").read_text(encoding="utf-8")
-    check("**FAILED**" in st and "HTTPError" in st, "failed run reports the error")
+    check("**FAILED" in st and "HTTPError" in st, "failed run reports the error")
     check(f"last successful run: {ok_stamp}" in st,
           "a failure keeps the earlier success timestamp, not 'never'")
     check("possibly stale" in st, "failure tells the reader the folder may be stale")
+
+    print("\ntelling a dead login apart from a dropped connection (ROADMAP 2)")
+
+    # The distinction that matters: a rejected login never clears by itself and is
+    # the signal to migrate; a dropped connection usually does clear.
+    check(mm.classify_failure("Refresh token rejected; re-authorizing in the browser.") == "auth",
+          "a rejected refresh token is an auth failure")
+    check(mm.classify_failure("ConnectionError: Max retries exceeded with url: /documents") == "network",
+          "a dropped connection is a network failure")
+    check(mm.classify_failure("KeyboardInterrupt: ") == "interrupted",
+          "Ctrl-C is neither")
+
+    # The trap this ordering exists for. The message names the TOKEN endpoint, so a
+    # naive keyword match calls it authentication and sends a person to log in over
+    # a connection that is not there.
+    check(mm.classify_failure(
+        "Could not reach https://api.mendeley.com/oauth/token: ConnectionError") == "network",
+        "failing to REACH the token endpoint is a network failure, not a dead login")
+
+    # Messages the tool actually emits, taken from the tool rather than retyped
+    # here -- a classifier tested only against invented strings is a classifier
+    # tested against nothing.
+    mm.NONINTERACTIVE = True
+    try:
+        mm.require_interactive("Browser authorization")
+        real_exit = ""
+    except SystemExit as exc:
+        real_exit = str(exc)
+    mm.NONINTERACTIVE = False
+    check(mm.classify_failure(real_exit) == "auth",
+          "the real scheduled-run message classifies as auth, not unknown")
+    src_mm = Path("mendeley_mirror.py").read_text(encoding="utf-8")
+    check("No documents returned" in src_mm
+          and mm.classify_failure("No documents returned. If your library is not "
+                                  "empty, try --reauth.") == "auth",
+          "an empty library from a non-empty account routes to the auth advice")
+
+    # The streak, which is the whole point of item 2: 'failed once' and 'has not
+    # worked in nine days' must not read the same.
+    hout = Path(tmp) / "health"; hout.mkdir()
+    h1 = mm.record_health(hout, False, "network", "2026-09-24T00:00:00+00:00")
+    check(h1["consecutive_failures"] == 1, "the first failure counts one")
+    h2 = mm.record_health(hout, False, "network", "2026-09-25T00:00:00+00:00")
+    h3 = mm.record_health(hout, False, "auth", "2026-09-26T00:00:00+00:00")
+    check(h3["consecutive_failures"] == 3, "consecutive failures accumulate")
+    check(h3["failing_since"] == "2026-09-24T00:00:00+00:00",
+          "the streak dates from its FIRST failure, not its latest")
+    check(h3["last_kind"] == "auth", "the kind is the latest one, not the first")
+    ok_h = mm.record_health(hout, True, "", "2026-09-27T00:00:00+00:00")
+    check(ok_h["consecutive_failures"] == 0, "one success clears the streak")
+    check("failing_since" not in ok_h, "and clears the date it started")
+    again = mm.record_health(hout, False, "network", "2026-09-28T00:00:00+00:00")
+    check(again["failing_since"] == "2026-09-28T00:00:00+00:00",
+          "a new streak dates from itself, not the old one")
+
+    # And the status file has to SAY it, or none of the above is visible.
+    mm.write_status(sout, False, t0, "Refresh token rejected", "auth", h3)
+    st = (sout / "mirror-status.md").read_text(encoding="utf-8")
+    check("**FAILED: authentication**" in st, "the status line names the kind of failure")
+    check("3 consecutive failures" in st, "and how many in a row")
+    check("2026-09-24" in st, "and since when")
+    check("ROADMAP item 1" in st and "not something to wait out" in st,
+          "an auth failure says migrate rather than wait")
+
+    mm.write_status(sout, False, t0, "ConnectionError", "network",
+                    {"consecutive_failures": 1, "failing_since": "2026-09-24T00:00:00+00:00"})
+    st_n = (sout / "mirror-status.md").read_text(encoding="utf-8")
+    check("may well clear by itself" in st_n, "one network failure is not alarming")
+    check("**1 consecutive failure**" in st_n and "failures**" not in st_n,
+          "and is counted in the singular")
+    mm.write_status(sout, False, t0, "ConnectionError", "network",
+                    {"consecutive_failures": 9, "failing_since": "2026-09-15T00:00:00+00:00"})
+    st_m = (sout / "mirror-status.md").read_text(encoding="utf-8")
+    check("stop assuming it will" in st_m, "nine of them is")
+    check(st_n != st_m, "one failure and nine do not read the same")
 
     mm.NONINTERACTIVE = True
     try:

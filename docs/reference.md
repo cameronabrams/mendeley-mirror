@@ -74,6 +74,10 @@ actually find it:
 
 - `mirror-status.md` says `written by offprint X.Y.Z` beside the run times.
 - `.mirror/state.json` carries `mirror_version` alongside `last_run`.
+- `.mirror/health.json` carries the consecutive-failure count, when the streak
+  began, and which kind the last failure was. It is separate from `state.json`
+  on purpose: that file's shape is something other people's tooling reads, and a
+  counter that changes on every failed run does not belong in it.
 - `mendeley_mirror.py --version` prints it.
 
 That makes "this extract predates the garbled-text fix" a question the library

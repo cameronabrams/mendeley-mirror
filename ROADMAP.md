@@ -71,10 +71,25 @@ rewritten, and a reader three weeks later sees a file that *looks* maintained.
 Every claim about mirror state has a shelf life of under an hour, and nothing
 currently shouts when that stops being true.
 
-- [ ] Distinguish an auth failure from a transient network failure in the status
-      file and the log, and say which.
-- [ ] Surface consecutive-failure count, so "failed once" and "has not succeeded
-      in nine days" do not read the same.
+- [x] Distinguish an auth failure from a transient network failure in the status
+      file and the log, and say which. `classify_failure` returns auth / network /
+      interrupted / other, and each gets different advice. Failing to *reach* the
+      token endpoint classifies as network, not auth, which is the confusion this
+      item was written about.
+- [x] Surface consecutive-failure count, so "failed once" and "has not succeeded
+      in nine days" do not read the same. `.mirror/health.json` holds the streak
+      and its start; one success clears it.
+
+**Brought forward 2026-09-24.** Cameron's Mendeley membership auto-renews
+2027-01-01 and cancelling is the plan, so the account's behaviour will change on
+a known date. An auth failure arriving as a shrug was a general risk when this
+item was written; with a cancellation date it is a specific one.
+
+Still open, and now the interesting part: **nothing reads the status file unless
+a person opens it.** The streak is recorded and legible, but a mirror that has
+not refreshed in nine days still announces it only to whoever looks. That is
+acceptable while the library session reads the file routinely; it stops being
+acceptable the moment nobody does.
 
 This matters more given item 1: an auth failure is exactly the signal that says
 *migrate now*, and it should not arrive as a shrug.
