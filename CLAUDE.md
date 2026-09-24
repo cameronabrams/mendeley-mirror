@@ -51,6 +51,24 @@ Corollary, learned the hard way while this repo and its user were one session:
 **a fix verified only against the case that prompted it is a check that cannot
 fail.** Ask the library session for cases it picked.
 
+Second corollary: **a change to the format of anything this tool writes bumps
+`__version__` in the same commit.** The version exists so a reader can tell which
+rules produced the file in front of them, and it can only do that if it moves
+when the rules do. 2026-09-24 shipped a new `mirror-status.md` layout under an
+unchanged `0.1.0`, which left two hours of output from before and after the
+change indistinguishable by the one line put there to distinguish them. The
+announcement rule above covers the library's *files*; this covers the tool's own
+*output*, which nobody else was going to notice.
+
+Third: announce a contract change **before the working tree carries it, not
+before the push**. The clone is what the systemd timer runs, so a saved file is
+already live — there is no staging step between editing and shipping, and the
+next `:07` is the deadline. The 09-24 namespacing was announced with 45 minutes
+to spare and the library session found a consumer of `citekeys.json` that the
+repo could not see: a procedure in its own notes that would have started
+handing Mendeley a namespaced id and getting a 404, months later, with nothing
+left to connect the two.
+
 ## Entry points
 
 `mendeley_mirror.py` is the refresh and the module everything else imports.
