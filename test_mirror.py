@@ -616,6 +616,61 @@ def main():
     # The run reported "0 extracted, 0 unchanged, 0 failed" and still wrote **ok**.
     # The fixtures did not catch it because THEY were keyed the old way too --
     # a fixture that models the format the code just left cannot fail with it.
+    # 2026-09-24: 33 extracts carried NUL bytes. GNU grep treats such a file as
+    # binary and reports NO MATCH -- silently, exit 1, no "Binary file matches".
+    # `grep -rl text/` is what the library's CLAUDE.md prescribes for subject
+    # search, so those papers answered a confident zero while sitting in
+    # library.bib and index.md marked as having extracted text.
+    print("\ncontrol characters that would hide an extract from grep")
+
+    check(mm.strip_control("a\x00b") == "ab", "a NUL is removed")
+    check(mm.strip_control("a\x01\x1f\x7fb") == "ab", "so are the other C0 controls and DEL")
+    check(mm.strip_control("keep\tthis\nand this") == "keep\tthis\nand this",
+          "tab and newline are text and are kept")
+    check(mm.clean_page_text("Polyethylene\x00 Terephthalate").find("\x00") == -1,
+          "clean_page_text strips them, so no extract is written with one")
+
+    # The property that actually matters is not "the string differs" -- it is that
+    # grep can still find the words. Test what the reader will do, with the real
+    # binary, or this is a check that cannot fail.
+    # -I is "ignore binary files", and it is what makes the paper vanish rather
+    # than anything about grep's defaults: plain GNU grep and ripgrep both FIND a
+    # NUL-bearing extract. It matters because the grep an agent session invokes
+    # here is a shim that passes -I, so a subject sweep run by the library session
+    # silently skips these files while a person at a terminal would not.
+    import shutil as _sh, subprocess as _sp
+    grep = _sh.which("grep")
+    if grep:
+        gdir = tmp / "grepcheck"; gdir.mkdir()
+        dirty = gdir / "dirty.md"
+        dirty.write_text("Polyethylene\x00 Terephthalate was milled", encoding="utf-8")
+        rc_dirty = _sp.run([grep, "-I", "-l", "Terephthalate", str(dirty)],
+                           capture_output=True).returncode
+        check(rc_dirty == 1,
+              "a NUL hides the paper from a binary-skipping search (the bug)")
+        rc_plain = _sp.run([grep, "-l", "Terephthalate", str(dirty)],
+                           capture_output=True).returncode
+        check(rc_plain == 0,
+              "while a search that reads binary files still finds it -- so the "
+              "scope is the tool, not every grep")
+        clean = gdir / "clean.md"
+        clean.write_text(mm.strip_control("Polyethylene\x00 Terephthalate was milled"),
+                         encoding="utf-8")
+        rc_clean = _sp.run([grep, "-I", "-l", "Terephthalate", str(clean)],
+                           capture_output=True).returncode
+        check(rc_clean == 0, "and stripping it makes the paper findable by both")
+
+    # The guard at the write site, for text built by some route that bypasses
+    # clean_page_text. It must strip AND say so, not strip quietly.
+    rows = [{"key": "Dirty2020Paper", "status": "control-chars",
+             "title": "A paper with NULs", "detail": "3 control characters stripped"}]
+    mm.write_extraction_report(rows, out, extracted=1)
+    crep = (out / "extraction-report.md").read_text(encoding="utf-8")
+    check("control characters stripped: 1" in crep, "the report counts them")
+    check("Dirty2020Paper" in crep and "## Control characters stripped" in crep,
+          "and names the paper under its own heading")
+    check("silent zero" in crep, "and says what would have gone wrong")
+
     print("\na pass that examines nothing is a failure, not a zero")
 
     def staged(name: str) -> Path:

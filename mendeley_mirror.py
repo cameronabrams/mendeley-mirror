@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1053,8 +1053,23 @@ def ocr_pdf_text(data: bytes, dpi: int = 300) -> tuple[str, int]:
     return "\n\n".join(chunks), chars
 
 
+# Control characters that survive extraction from some PDFs and carry no
+# information in a text extract. A single NUL is enough to make GNU grep treat
+# the whole file as binary: it then reports NO MATCH, silently, with exit 1 --
+# not "Binary file matches", and no warning. `grep -rl text/` is the command the
+# library's own CLAUDE.md prescribes for subject search, so 33 papers were
+# answering a confident zero while sitting in library.bib and index.md, marked as
+# having extracted text. Tab and newline are kept; everything else in C0 goes.
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
+
+
+def strip_control(text: str) -> str:
+    """Remove control characters that make a text file unsearchable."""
+    return CONTROL_CHARS.sub("", text)
+
+
 def clean_page_text(text: str) -> str:
-    text = text.replace("\x0c", "")
+    text = strip_control(text)
     # join words broken across a line by hyphenation: "cataly-\nsis" -> "catalysis"
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
     # a single newline inside a paragraph is a column-wrap artifact, not a break
@@ -1116,6 +1131,7 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
     failed = [r for r in rows if r["status"] == "failed"]
     ocred = [r for r in rows if r["status"] == "ocr"]
     garbled = [r for r in rows if r["status"] == "garbled"]
+    ctrl = [r for r in rows if r["status"] == "control-chars"]
     lines = [
         "# Extraction report",
         "",
@@ -1123,6 +1139,7 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
         f"- no text layer (probably scans): {len(empty)}",
         f"- read by OCR: {len(ocred)}",
         f"- garbled text layer, pages repaired or dropped: {len(garbled)}",
+        f"- control characters stripped: {len(ctrl)}",
         f"- failed outright: {len(failed)}",
         "",
         "Anything under 'No extractable text' is invisible to any text search of",
@@ -1132,13 +1149,19 @@ def write_extraction_report(rows: list, out: Path, extracted: int) -> None:
         "a machine guessed every character. Those extracts carry ocr: true and a",
         "banner. Verify quotations and all numbers against the rendered page.",
         "",
+        "Anything under 'Control characters stripped' held bytes that make GNU",
+        "grep treat a file as binary, so it would have answered every search with",
+        "a silent zero. They were removed and the extract is searchable; the entry",
+        "is here because the PDF produced them and another one probably will.",
+        "",
         "Anything under 'Garbled text layer' had pages the PDF library read as",
         "punctuation soup. Those pages were re-read with pdftotext, or left out of",
         "the extract where that failed too; a missing page marker means the latter.",
         "",
     ]
     for label, rows_ in (("No extractable text", empty), ("Read by OCR", ocred),
-                         ("Garbled text layer", garbled), ("Failed", failed)):
+                         ("Garbled text layer", garbled),
+                         ("Control characters stripped", ctrl), ("Failed", failed)):
         if not rows_:
             continue
         lines += [f"## {label}", ""]
@@ -1260,9 +1283,23 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                             report.append({"key": stem, "status": "ocr",
                                            "title": doc.get("title", ""),
                                            "detail": f"{chars} characters across {pages} pages"})
-                        text_target.write_text(
-                            text_document(doc, stem, body, pages, chars, ocr=from_ocr),
-                            encoding="utf-8")
+                        document = text_document(doc, stem, body, pages, chars,
+                                                 ocr=from_ocr)
+                        # Belt and braces. clean_page_text has already stripped
+                        # these per page; if any reach here, something built text
+                        # by another route and the extract would be invisible to
+                        # grep. Strip them and SAY so, rather than writing a file
+                        # that answers every search with a confident zero.
+                        safe = strip_control(document)
+                        if safe != document:
+                            removed = len(document) - len(safe)
+                            note(f"  ! {stem}: removed {removed} control "
+                                 "characters that would have hidden it from grep")
+                            report.append({"key": stem, "status": "control-chars",
+                                           "title": doc.get("title", ""),
+                                           "detail": f"{removed} control characters "
+                                                     "stripped after extraction"})
+                        text_target.write_text(safe, encoding="utf-8")
                         fetched += 1
                     known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": status,
                                       "detail": detail, "pages": pages, "chars": chars}
