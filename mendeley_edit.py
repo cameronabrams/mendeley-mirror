@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     from mendeley_mirror import (DEFAULT_OUT, Mendeley, config_dir, get_app_config,
-                                 load_json, mirror_state_dir)
+                                 load_json, local_id, mirror_state_dir)
     from mendeley_push import DOC_CT
 except ImportError as exc:  # pragma: no cover
     sys.exit(f"mendeley_edit.py must sit beside the other mirror scripts ({exc})")
@@ -130,9 +130,19 @@ def main() -> int:
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
     if not keymap:
         die(f"no citekeys.json under {out} -- run the mirror once first")
-    by_key = {v: k for k, v in keymap.items()}
+    # This script PATCHes a live Mendeley record, so it may only ever resolve a key
+    # to a Mendeley id. A key belonging to another backend is refused by name
+    # rather than silently skipped -- pointing an edit at the wrong account is the
+    # expensive mistake this namespace exists to prevent.
+    by_key = {key: raw for ident, key in keymap.items()
+              if (raw := local_id(ident)) is not None}
+    foreign = {key for ident, key in keymap.items() if local_id(ident) is None}
 
     missing = [k for k in edits if k not in by_key]
+    wrong_backend = sorted(k for k in missing if k in foreign)
+    if wrong_backend:
+        die("citation key(s) that do not belong to Mendeley, and this script only "
+            "edits Mendeley: " + ", ".join(wrong_backend))
     if missing:
         die("citation key(s) the mirror has never seen: " + ", ".join(sorted(missing)))
 

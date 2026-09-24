@@ -92,11 +92,14 @@ def main():
     print("citation keys")
     keymap = mm.assign_citekeys(DOCS, cfgdir / "citekeys.json")
     print("   ", keymap)
-    check(keymap["d1"] == "Muller2020Yield", "accents folded, stopword-free title word")
-    check(keymap["d2"] == "Bird2021Transport", "stopword 'the' skipped")
-    check(keymap["d3"] == "Bird2021Transporta", "collision gets a suffix")
-    check(keymap["d5"] == "NISTndSteam", f"corporate acronym keeps its case -> {keymap['d5']}")
+    q = mm.qualify                       # ids are stored namespaced: 'mendeley:d1'
+    check(keymap[q("d1")] == "Muller2020Yield", "accents folded, stopword-free title word")
+    check(keymap[q("d2")] == "Bird2021Transport", "stopword 'the' skipped")
+    check(keymap[q("d3")] == "Bird2021Transporta", "collision gets a suffix")
+    check(keymap[q("d5")] == "NISTndSteam", f"corporate acronym keeps its case -> {keymap[q('d5')]}")
     check(len(set(keymap.values())) == len(DOCS), "all keys unique")
+    check(all(k.startswith("mendeley:") for k in keymap),
+          "every stored id names the backend it came from")
 
     # stability: re-running with a new document must not renumber existing keys
     more = DOCS + [{"id": "d7", "created": "2018-01-01T00:00:00Z", "type": "journal",
@@ -104,6 +107,69 @@ def main():
                     "authors": [{"last_name": "Bird", "first_name": "R"}]}]
     keymap2 = mm.assign_citekeys(more, cfgdir / "citekeys.json")
     check(all(keymap2[k] == v for k, v in keymap.items()), "keys stable across runs")
+
+    print("\nidentifier namespaces (ROADMAP 1)")
+
+    check(mm.qualify("abc") == "mendeley:abc", "a bare id gets this backend's name")
+    check(mm.qualify(mm.qualify("abc")) == "mendeley:abc", "and qualifying twice is a no-op")
+    check(mm.qualify("abc", "zotero") == "zotero:abc", "another backend names itself")
+    check(mm.split_id("zotero:abc") == ("zotero", "abc"), "and splits back apart")
+    check(mm.split_id("abc") == ("mendeley", "abc"),
+          "a bare id reads as Mendeley's, which is what makes old files readable")
+    # A colon alone is not a namespace, or a DOI-ish or URL-ish id would be eaten.
+    check(mm.is_qualified("http://example.org/x") is False, "a URL is not a namespaced id")
+    check(mm.split_id("http://example.org/x") == ("mendeley", "http://example.org/x"),
+          "and survives a round trip unchanged")
+
+    check(mm.local_id("mendeley:abc") == "abc", "this backend's id comes back raw")
+    check(mm.local_id("zotero:abc") is None,
+          "another backend's id resolves to nothing rather than to a wrong paper")
+    check(mm.local_id("zotero:abc", "zotero") == "abc", "and to itself under its own backend")
+
+    # The collision the namespace exists to prevent: the same raw id from two
+    # services is two different papers.
+    check(mm.qualify("X1", "mendeley") != mm.qualify("X1", "zotero"),
+          "one raw id from two backends does not collide")
+
+    migrated, n = mm.qualify_map({"a": "Key1", "b": "Key2"})
+    check(migrated == {"mendeley:a": "Key1", "mendeley:b": "Key2"} and n == 2,
+          "an old map migrates whole")
+    again, n2 = mm.qualify_map(migrated)
+    check(again == migrated and n2 == 0, "and migrating twice changes nothing")
+    mixed, n3 = mm.qualify_map({"zotero:z": "Key3", "a": "Key1"})
+    check(mixed == {"zotero:z": "Key3", "mendeley:a": "Key1"} and n3 == 1,
+          "a map holding both backends migrates only what needs it")
+    check(list(mixed) == ["zotero:z", "mendeley:a"], "and keeps its order, so the file diffs cleanly")
+
+    # THE ACCEPTANCE CRITERION for the Zotero migration: a key already cited in a
+    # manuscript, or naming a file under findings/, must still mean the same paper.
+    premigration = tmp / "premigration.json"
+    bare = {d["id"]: keymap[q(d["id"])] for d in DOCS}
+    premigration.write_text(json.dumps(bare), encoding="utf-8")
+    after = mm.assign_citekeys(DOCS, premigration)
+    check(all(after[q(doc_id)] == key for doc_id, key in bare.items()),
+          "every pre-namespacing key still resolves to the same paper")
+    check(sorted(after.values()) == sorted(bare.values()),
+          "and no key was added, dropped or renumbered by the migration")
+
+    # Adding a second backend afterwards must not disturb what is already assigned.
+    with_zot = dict(after)
+    with_zot["zotero:ZZZ"] = "Somebody2030New"
+    premigration.write_text(json.dumps(with_zot), encoding="utf-8")
+    after2 = mm.assign_citekeys(DOCS, premigration)
+    check(all(after2[q(doc_id)] == key for doc_id, key in bare.items()),
+          "a second backend's entries do not renumber the first's")
+    check(after2["zotero:ZZZ"] == "Somebody2030New", "and are themselves left alone")
+
+    # state.json is keyed by FILE id and gets the same treatment. The property that
+    # matters is that migration must not make the extractor think a file is new:
+    # 2,700 re-extractions is what "just re-run it" would cost.
+    old_state = {"files": {"f1": {"filehash": "abc", "status": "ok"}}}
+    known, moved = mm.qualify_map(old_state["files"])
+    check(moved == 1 and known["mendeley:f1"]["filehash"] == "abc",
+          "attachment state migrates with its filehash intact")
+    check(known.get(mm.qualify("f1"), {}).get("filehash") == "abc",
+          "and is still found by the id the API reports, so nothing re-extracts")
 
     print("\nbibtex")
     mm.write_bibtex(DOCS, keymap, out, include_abstract=True)
@@ -152,7 +218,7 @@ def main():
 
     print("\nbibtex round-trip (real bibtex binary)")
     tex = tmp / "t.tex"
-    cites = ",".join(keymap[d["id"]] for d in DOCS)
+    cites = ",".join(keymap[mm.qualify(d["id"])] for d in DOCS)
     tex.write_text(
         "\\documentclass{article}\\usepackage[utf8]{inputenc}\\begin{document}\n"
         f"\\nocite{{{cites}}}\n\\bibliographystyle{{plain}}\\bibliography{{library}}\n"
@@ -184,7 +250,7 @@ def main():
     check(folders["Substack"] == ["Bird2021Transport", "Muller2020Yield"], "folder maps to sorted keys")
     check("Substack/week 3" in folders, "nested folder path built")
 
-    md = mm.annotation_markdown(DOCS[0], keymap["d1"], ANNOTATIONS)
+    md = mm.annotation_markdown(DOCS[0], keymap[mm.qualify("d1")], ANNOTATIONS)
     check(md.index("p. 2") < md.index("p. 3"), "annotations sorted by page")
     check("> conversion plateaus" in md, "highlight text quoted")
     check("*(highlight, p. 2)*" in md, "textless highlight still recorded")
@@ -338,13 +404,13 @@ def main():
     check((h_out / "text" / "Muller2020Yield.md").exists(), "text file written")
     check(not (h_out / "pdf" / "Muller2020Yield.pdf").exists(), "PDF discarded after extraction")
     check(not (h_out / "pdf").exists(), "empty pdf/ directory cleaned up")
-    check(st["files"]["x1"]["status"] == "ok", "state records the extraction")
+    check(st["files"][mm.qualify("x1")]["status"] == "ok", "state records the extraction")
 
     # An OCR'd attachment is skipped on every later refresh, because its extract
     # exists. It must still be listed under "Read by OCR" -- on 11 Sep the first
     # hourly refresh after the OCR run emptied that section for all 108 papers,
     # because the skip branch only re-listed no-text and failed entries.
-    st["files"]["x1"].update(status="ocr", detail="read by OCR", pages=2, chars=1234)
+    st["files"][mm.qualify("x1")].update(status="ocr", detail="read by OCR", pages=2, chars=1234)
     fetched, skipped, failed, rep_rows = mm.harvest_attachments(
         NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
         {"d1": "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")

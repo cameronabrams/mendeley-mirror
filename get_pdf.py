@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from mendeley_mirror import (API, DEFAULT_OUT, Mendeley, config_dir,
                                  get_app_config, interactive_authorize, load_json,
-                                 mirror_state_dir)
+                                 local_id, mirror_state_dir)
 except ImportError:
     sys.exit("get_pdf.py must sit in the same folder as mendeley_mirror.py")
 
@@ -172,7 +172,10 @@ def main() -> int:
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
     if not keymap:
         sys.exit("No citation-key map found -- run mendeley_mirror.py first.")
-    by_key = {v: k for k, v in keymap.items()}
+    # Stored ids are namespaced. Only this backend's may reach the Mendeley API:
+    # another service's id would 404 at best, and at worst match a different paper.
+    by_key = {key: raw for ident, key in keymap.items()
+              if (raw := local_id(ident)) is not None}
 
     dest = (args.dest or cache_dir()).expanduser()
     dest.mkdir(parents=True, exist_ok=True)

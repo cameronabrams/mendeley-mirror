@@ -63,8 +63,8 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from mendeley_mirror import (API, DEFAULT_OUT, Mendeley, config_dir,
-                                 get_app_config, load_json, mirror_state_dir,
-                                 page_is_garbled, pdftotext_pages)
+                                 get_app_config, load_json, local_id,
+                                 mirror_state_dir, page_is_garbled, pdftotext_pages)
     from mendeley_push import CSL_TO_MENDELEY, DOC_CT, csl_year, one, split_name
     from get_pdf import cache_dir
 except ImportError as exc:
@@ -451,9 +451,11 @@ def existing_document(out: Path, doi: str, title: str = "") -> tuple[str, str]:
     if not key:
         return "", ""
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
-    for doc_id, citekey in keymap.items():
+    for ident, citekey in keymap.items():
         if citekey == key:
-            return doc_id, key
+            # Only a Mendeley id can be attached to; a key from another backend
+            # resolves to no id, and the caller reports it as unresolved.
+            return local_id(ident) or "", key
     return "", key
 
 

@@ -35,15 +35,23 @@ those keys are cited in manuscripts and are the file names under `findings/`.
 A naive re-import under Zotero item ids would reassign all ~2,700 of them: every
 citation in a draft would rot and every findings file would orphan. So:
 
-- [ ] Namespace the identifiers (`mendeley:<id>`, `zotero:<id>`) in
+- [x] Namespace the identifiers (`mendeley:<id>`, `zotero:<id>`) in
       `citekeys.json` and in `state.json`, which is keyed by Mendeley *file* id.
-      This must land **before** any key is assigned from a second source.
+      **Done 2026-09-24**, before any key is assigned from a second source, which
+      was the whole point — it is impossible to retrofit safely afterwards.
+      Migration is automatic and idempotent; a bare id still reads as Mendeley's,
+      so a map written by an older version stays readable. Verified against the
+      live library on a copy: 2,727 of 2,727 keys resolve to the same paper, no
+      key text changed, and 2,733 of 2,733 attachment states keep their filehash,
+      so nothing re-extracts.
 - [ ] Write the migration map by matching old records to new: DOI first, then
       title+year, then by hand. Report the unmatched rather than guessing —
       roughly 17% of this library's records carry no DOI.
-- [ ] Assert, as a test, that every pre-migration citation key still resolves to
+- [x] Assert, as a test, that every pre-migration citation key still resolves to
       the same paper afterwards. This is the acceptance criterion; everything
-      else is mechanics.
+      else is mechanics. It is in `test_mirror.py` and it covers the case that
+      matters next: entries from a second backend added to an existing map must
+      not renumber the first backend's.
 
 **The mechanics really are mechanics.** The Mendeley-specific surface in
 `mendeley_mirror.py` is one base URL, one media type string, one `Mendeley`

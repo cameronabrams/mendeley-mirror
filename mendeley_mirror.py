@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -462,14 +462,80 @@ def make_citekey(doc: dict, taken: set) -> str:
     return key
 
 
+# --------------------------------------------------------------------------
+# identifier namespaces
+#
+# Every id this tool stores is qualified with the backend it came from, so that
+# `mendeley:abc` and `zotero:abc` cannot collide and nothing has to guess which
+# service a stored id belongs to. It costs nothing while there is one backend
+# and is impossible to retrofit safely once there are two: a citation key is
+# assigned once per id and never changes, so an unqualified map that starts
+# taking ids from a second source silently reassigns keys that are already
+# cited in manuscripts and are file names under findings/.
+# --------------------------------------------------------------------------
+
+BACKEND = "mendeley"                      # the only source that exists today
+KNOWN_BACKENDS = ("mendeley", "zotero")
+
+
+def is_qualified(ident: str) -> bool:
+    """True for 'mendeley:abc'. False for a bare id, and for 'http://x' -- a
+    colon alone does not make a namespace, only a known backend before one does."""
+    head, sep, _rest = ident.partition(":")
+    return bool(sep) and head in KNOWN_BACKENDS
+
+
+def qualify(raw_id: str, backend: str = BACKEND) -> str:
+    """'abc' -> 'mendeley:abc'. Idempotent, so it is safe to apply twice."""
+    return raw_id if is_qualified(raw_id) else f"{backend}:{raw_id}"
+
+
+def split_id(ident: str) -> tuple[str, str]:
+    """('mendeley', 'abc'). A bare id is read as this backend's, which is what
+    makes every map written before namespacing still readable."""
+    head, sep, rest = ident.partition(":")
+    return (head, rest) if sep and head in KNOWN_BACKENDS else (BACKEND, ident)
+
+
+def local_id(ident: str, backend: str = BACKEND) -> str | None:
+    """The raw id if it belongs to `backend`, else None.
+
+    The None is the point. A script that talks to one service must refuse a key
+    belonging to another rather than send someone else's id to an API that will
+    cheerfully report it as not found -- or, worse, match it.
+    """
+    source, raw = split_id(ident)
+    return raw if source == backend else None
+
+
+def qualify_map(d: dict, backend: str = BACKEND) -> tuple[dict, int]:
+    """Namespace the keys of a stored map, returning (map, how many changed).
+
+    Order is preserved so a migrated file diffs against its predecessor line for
+    line, and the migration is idempotent: running it on an already-qualified
+    map changes nothing and reports zero.
+    """
+    out, moved = {}, 0
+    for k, v in d.items():
+        q = qualify(k, backend)
+        if q != k:
+            moved += 1
+        out[q] = v
+    return out, moved
+
+
 def assign_citekeys(docs: list, keymap_path: Path) -> dict:
     """Keys, once assigned to a document id, never change between runs."""
-    keymap = load_json(keymap_path, {})
+    keymap, migrated = qualify_map(load_json(keymap_path, {}))
+    if migrated:
+        # Key text is untouched -- only the id it hangs on changes -- so every
+        # citation already in a manuscript still resolves to the same paper.
+        note(f"  namespaced {migrated} citation-key ids as {BACKEND}:<id>")
     taken = set(keymap.values())
     # Deterministic order for first assignment, so a fresh run is reproducible.
     for doc in sorted(docs, key=lambda d: (str(d.get("created", "")), d["id"])):
-        if doc["id"] not in keymap:
-            keymap[doc["id"]] = make_citekey(doc, taken)
+        if qualify(doc["id"]) not in keymap:
+            keymap[qualify(doc["id"])] = make_citekey(doc, taken)
     save_json(keymap_path, keymap)
     return keymap
 
@@ -679,8 +745,8 @@ def write_bibtex(docs: list, keymap: dict, out: Path, include_abstract: bool) ->
         f"% {len(docs)} references. Do not edit by hand; edit in Mendeley and re-run.",
         "",
     ]
-    for doc in sorted(docs, key=lambda d: keymap[d["id"]].lower()):
-        chunks.append(bib_entry(doc, keymap[doc["id"]], include_abstract))
+    for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"])].lower()):
+        chunks.append(bib_entry(doc, keymap[qualify(doc["id"])], include_abstract))
         chunks.append("")
     (out / "library.bib").write_text("\n".join(chunks), encoding="utf-8")
 
@@ -699,8 +765,8 @@ def write_index(docs: list, keymap: dict, files_by_doc: dict, ann_by_doc: dict, 
         "| key | year | first author | title | journal | doi | text | notes |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for doc in sorted(docs, key=lambda d: keymap[d["id"]].lower()):
-        key = keymap[doc["id"]]
+    for doc in sorted(docs, key=lambda d: keymap[qualify(d["id"])].lower()):
+        key = keymap[qualify(doc["id"])]
         ids = doc.get("identifiers") or {}
         title = (doc.get("title") or "").replace("|", r"\|")
         source = (doc.get("source") or "").replace("|", r"\|")
@@ -731,7 +797,8 @@ def write_folders(folders: list, folder_docs: dict, keymap: dict, out: Path) -> 
 
     payload = {
         full_name(f): sorted(
-            keymap[d] for d in folder_docs.get(f["id"], []) if d in keymap
+            keymap[qualify(d)] for d in folder_docs.get(f["id"], [])
+            if qualify(d) in keymap
         )
         for f in folders
     }
@@ -1091,7 +1158,12 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
     pdf_dir = out / "pdf"
     if mode == "keep":
         pdf_dir.mkdir(parents=True, exist_ok=True)
-    known = state.setdefault("files", {})
+    known, migrated = qualify_map(state.get("files", {}))
+    state["files"] = known
+    if migrated:
+        # Not cosmetic: an unqualified file id from a second backend would collide
+        # here and skip an extraction as "already done".
+        note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
     fetched = skipped = failed = reused = 0
     report: list = []
     state_path = state_path or mirror_state_dir(out) / "state.json"
@@ -1109,7 +1181,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                 stem = key if i == 0 else f"{key}-{i+1}"
                 is_pdf = "pdf" in (f.get("mime_type") or "").lower()
                 text_target = text_dir / f"{stem}.md"
-                prior = known.get(f["id"], {})
+                prior = known.get(qualify(f["id"]), {})
                 if prior.get("filehash") == f.get("filehash") and (
                         text_target.exists() or prior.get("status") in ("no-text", "not-pdf")):
                     skipped += 1
@@ -1152,7 +1224,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         (pdf_dir / f"{stem}{suffix}").write_bytes(data)
 
                     if not is_pdf:
-                        known[f["id"]] = {"filehash": f.get("filehash"), "status": "not-pdf"}
+                        known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": "not-pdf"}
                         continue
 
                     body, pages, chars, content, garble = extract_pdf_text(data)
@@ -1187,7 +1259,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                             text_document(doc, stem, body, pages, chars, ocr=from_ocr),
                             encoding="utf-8")
                         fetched += 1
-                    known[f["id"]] = {"filehash": f.get("filehash"), "status": status,
+                    known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": status,
                                       "detail": detail, "pages": pages, "chars": chars}
                     if mode == "text" and local.exists():
                         local.unlink()  # the text is the artifact; Mendeley keeps the PDF
@@ -1197,7 +1269,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
                         time.sleep(0.2)
                 except Exception as exc:  # one bad file shouldn't stop the run
                     failed += 1
-                    known[f["id"]] = {"filehash": f.get("filehash"), "status": "failed",
+                    known[qualify(f["id"])] = {"filehash": f.get("filehash"), "status": "failed",
                                       "detail": str(exc)[:200]}
                     report.append({"key": stem, "status": "failed",
                                    "title": doc.get("title", ""), "detail": str(exc)[:120]})
@@ -1605,7 +1677,7 @@ def run(args, out: Path, mirror_dir: Path) -> int:
             doc = docs_by_id.get(doc_id)
             if not doc:
                 continue
-            key = keymap[doc_id]
+            key = keymap[qualify(doc_id)]
             (ann_dir / f"{key}.md").write_text(
                 annotation_markdown(doc, key, anns), encoding="utf-8"
             )

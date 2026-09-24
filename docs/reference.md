@@ -74,6 +74,12 @@ actually find it:
 
 - `mirror-status.md` says `written by offprint X.Y.Z` beside the run times.
 - `.mirror/state.json` carries `mirror_version` alongside `last_run`.
+Ids in `citekeys.json` and in `state.json` are **namespaced** — `mendeley:<id>` —
+so that a second backend can be added without two services' ids colliding. A bare
+id is read as Mendeley's, so a map written before this change still works, and it
+is rewritten in place on the next run. The citation *key* never changes: it is
+assigned once per id and is cited in manuscripts and used as a file name.
+
 - `.mirror/health.json` carries the consecutive-failure count, when the streak
   began, and which kind the last failure was. It is separate from `state.json`
   on purpose: that file's shape is something other people's tooling reads, and a
