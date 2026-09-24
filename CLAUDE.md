@@ -24,6 +24,35 @@ testing and break for everyone whose clone is not inside their library.
 `Path(__file__).parent` on `sys.path` is fine, and is how the four satellite
 scripts import `mendeley_mirror` as a module.
 
+## The second structural rule: stored ids are namespaced, live ids are not
+
+Ids that **persist** — the keys of `citekeys.json` and of `state.json`'s `files`
+— are written `mendeley:<id>`. Ids that arrive in an **API response** and live
+only for the run — `docs_by_id`, `files_by_doc`, `folder_docs` — are bare. That
+asymmetry is deliberate: the stored maps have to survive a second backend, and
+the in-memory ones are rebuilt every run and never meet one.
+
+They meet in exactly one place, the lookup at the head of `harvest_attachments`,
+and that is where `qualify()` belongs. Getting it wrong there does not raise: the
+guard beside it was written for the rare document with no citation key, and a
+lookup that misses on *every* document takes that branch every time. On
+2026-09-24 that skipped all 2,733 attachments and still wrote `**ok**`.
+
+So: `keymap` and `state["files"]` are indexed through `qualify()`, always;
+`local_id()` is how a raw id comes back out, and it returns `None` rather than a
+wrong id for another backend's. When the Zotero backend lands this is the rule it
+will be tempted to break, because a second source is exactly the case the bare
+ids have never had to survive.
+
+Two habits that came out of the same failure, and are cheaper than the debugging:
+
+- **Searching for one access pattern is not searching for the accesses.** Every
+  `keymap[...]` was fixed and every `keymap.get(...)` was missed. Grep the name,
+  not a spelling of it.
+- **A pass that does no work does not get to report success.** If attachments
+  were listed and none were examined, `harvest_attachments` raises. Counting to
+  zero is a result the tool must be able to tell apart from doing nothing.
+
 ## What lives where, and why
 
 | where | what | why |
