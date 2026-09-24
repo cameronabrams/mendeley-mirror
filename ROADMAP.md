@@ -68,6 +68,24 @@ annotations and findings all work on a generic document/file/annotation shape.
 - [ ] Decide what "primary" means for the writing scripts (`inbox.py`,
       `mendeley_push.py`, `mendeley_edit.py`). They may only ever target one
       account; pointing them at the wrong one is the expensive mistake.
+- [ ] **Decide whether the first Zotero refresh re-extracts everything.** It
+      will by default, and that is not a small default. `state.json` is keyed by
+      attachment *file* id; Zotero's ids are not Mendeley's, so every attachment
+      reads as new, `prior` is empty, the filehash cannot match, and all ~2,700
+      are downloaded and extracted again. Checked, not assumed.
+
+      That is not harmful — a failed extraction leaves the existing text file
+      alone — but it decides a real question. Re-extraction needs every PDF
+      readable, which means either Zotero File Storage (the API serves files only
+      from there, not from WebDAV or linked files) or the files on local disk.
+      **The alternative is an adoption path**: where a citation key already has
+      `text/<key>.md` and the new attachment is otherwise unknown, record the
+      state entry as adopted instead of re-extracting. That trades verification
+      for bandwidth, and the citation key is the anchor either way.
+
+      Re-extracting also regenerates every extract with current code, which
+      would clear the 2,459 carrying control characters as a side effect. The
+      adoption path does not, and those two facts have to be decided together.
 
 ---
 
