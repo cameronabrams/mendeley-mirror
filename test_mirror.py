@@ -905,6 +905,51 @@ def main():
     check("placeholder pagination (1)" in r4,
           "and the library-wide tail counts the proof extract on its own")
 
+    # The worst combination: the extract that cannot be re-fetched is the one
+    # with real page numbers, and the copy Mendeley still holds is the proof.
+    # Shan2011How is exactly this. Losing it loses no content -- the pair is
+    # 99.3% alike -- only the pagination, which is the only thing it is for.
+    irr = tmp / "irreplaceable"; (irr / "text").mkdir(parents=True)
+    shared = "<!-- p. 1 -->\n\n" + ("identical body sentence. " * 120) + "\n"
+    (irr / "text" / "Irr2011How-2.md").write_text(
+        shared + "J. Am. Chem. Soc. XXXX, XXX, 000\u2013000\n", encoding="utf-8")
+    (irr / "text" / "Irr2011How-3.md").write_text(
+        shared + "J. Am. Chem. Soc. 2011, 133, 9181\u20139183\n", encoding="utf-8")
+
+    class OnlyTwo:
+        """Mendeley holds two attachments; the mirror has extracts -2 and -3, so
+        -3 is the orphan -- and -3 is the one with real pages."""
+        def paged(self, path, kind, **kw):
+            return [{"document_id": "dz", "mime_type": "application/pdf"}] * 2
+
+    buf5 = io.StringIO()
+    with contextlib.redirect_stdout(buf5):
+        rc5 = getpdf.attachment_inventory(OnlyTwo(), irr, {"Irr2011How": "dz"}, [])
+    r5 = buf5.getvalue()
+    check("ORPHAN" in r5, "the orphan is still reported")
+    check("IRREPLACEABLE" in r5, "and the worse case is called out separately")
+    check("-3" in r5 and "Do not delete it" in r5,
+          "naming the extract that must not be deleted")
+    check("ONLY citable copy" in r5, "and summarized at the end")
+    check(rc5 == 1, "an orphan still makes the sweep exit non-zero")
+
+    # The ordinary orphan -- where what is lost is a duplicate -- must NOT be
+    # escalated, or the loud case stops being loud.
+    ord_ = tmp / "ordinaryorphan"; (ord_ / "text").mkdir(parents=True)
+    (ord_ / "text" / "Ord2009Methods.md").write_text(shared, encoding="utf-8")
+    (ord_ / "text" / "Ord2009Methods-2.md").write_text(shared, encoding="utf-8")
+
+    class JustOne:
+        def paged(self, path, kind, **kw):
+            return [{"document_id": "dy", "mime_type": "application/pdf"}]
+
+    buf6 = io.StringIO()
+    with contextlib.redirect_stdout(buf6):
+        getpdf.attachment_inventory(JustOne(), ord_, {"Ord2009Methods": "dy"}, [])
+    r6 = buf6.getvalue()
+    check("ORPHAN" in r6 and "IRREPLACEABLE" not in r6,
+          "an orphan whose loss is only a duplicate is not escalated")
+
     b2 = getpdf.extract_body(nb / "text" / "NoBase2011How-2.md")
     b3 = getpdf.extract_body(nb / "text" / "NoBase2011How-3.md")
     check(b2 != b3, "the two bodies are not identical, so exact equality finds nothing")

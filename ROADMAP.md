@@ -172,6 +172,8 @@ hypothesis and the wrong-claim rate did not move at all.
 
 ## 5. Mark a proof extract at extraction, not at inspection
 
+> Ranked below the orphan hazard in item 6 after testing, not before.
+
 **Why.** Fourteen extracts in this library carry placeholder pagination —
 `xxx–xxx`, `XXXX, XXX, 000–000` — because the PDF is an accepted proof rather
 than the version of record. Nothing says so. `get_pdf.py --attachments` lists
@@ -198,9 +200,42 @@ added precisely so a machine-read extract could not be quoted as if typeset.
       the page numbers are not citable.
 - [ ] Announce it first: this changes `text/<key>.md`, which is a contract, and
       it only takes effect on re-extraction.
-- [ ] Consider whether `finding.py` should refuse to derive an offset from a
-      proof at all. It currently will, and the number it produces is real
-      arithmetic over meaningless input.
+- [ ] Consider whether `finding.py` should say so when asked about a proof. It
+      does **not** currently derive a wrong page from one — that claim was made
+      here without running it, and it is wrong. Tested on five of the ten proofs
+      filed alone: all emit a bare `locator: marker p. 1`, and an
+      operator-supplied `--journal-page` is refused, because `000–000` is not a
+      number the scan can match. The confirm-only design already fails safe. No
+      proof in this library has produced a locator in any findings record.
+
+      So this item is worth doing for the **label**, not to close a live
+      wrong-locator path. Priority accordingly.
+
+---
+
+## 6. An orphaned extract can be the only citable copy
+
+**Why.** `Shan2011How-3` is both the orphan and the only copy with real page
+numbers. The extract that cannot be re-fetched is the published version; what
+Mendeley still holds is the proof. Deleting it would lose no *content* — the pair
+is 99.3% alike — only the **pagination**, which is the one thing that differs and
+the only reason anyone wants that copy. `Caparco2018Effect` is worse in a
+different way: its base is a proof and its `-2` is supporting information, so the
+record holds no citable copy at all.
+
+`get_pdf.py --attachments` now says `IRREPLACEABLE` for the Shan shape, which
+inference it states as one — the file listing does not say which attachment went
+missing, so it is read from the numbering.
+
+- [ ] Nothing *protects* such an extract. The re-extraction procedure that fixed
+      the NUL bytes deletes `text/<key>.md` to force a rebuild, and doing that to
+      an orphan destroys it. That procedure grew a restore-from-backup step for
+      exactly this reason, but the protection lives in a one-off script rather
+      than in the tool.
+- [ ] Detect the no-citable-copy case (`Caparco2018Effect`): every extract of a
+      record is a proof or supporting information. Needs an SI heuristic, which
+      is a second guess stacked on the proof one — worth measuring before
+      shipping.
 
 ---
 

@@ -187,12 +187,13 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
             counts[key] = counts.get(key, 0) + 1
 
     interesting = sorted(k for k, v in extracts.items() if len(v) > 1 or keys)
-    orphans = dupes = near = proofs = 0
+    orphans = dupes = near = proofs = irreplaceable = 0
     print(f"{'key':<34}{'extracts':>9}{'attachments':>13}  note")
     for key in interesting:
         have, want = counts.get(key, 0), max(extracts[key])
         notes = []
-        if want > have:
+        orphaned = [n for n in extracts[key] if n > have]
+        if orphaned:
             notes.append(f"ORPHAN: -{want} has no attachment in Mendeley")
             orphans += 1
         # Compare every PAIR of extracts this record actually has, not each one
@@ -244,9 +245,31 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
                         notes.append(f"NEAR-DUPLICATE: -{b} is {pct:.2f}% the same "
                                      f"as {which} -- check before citing both")
                         near += 1
+        # The worst combination, and the reason it gets its own line. Shan2011How's
+        # -3 is BOTH the orphan and the only copy with real page numbers: the
+        # extract that cannot be re-fetched is the published version, and the one
+        # Mendeley still holds is the proof. Deleting the orphan would lose no
+        # CONTENT -- the pair is 99.3% alike -- only the pagination, which is the
+        # single thing that differs and the only reason anyone wants it.
+        #
+        # Which extract is orphaned is inferred from the numbering, since the
+        # listing does not say. It is the best available reading and it is stated
+        # as one.
+        if orphaned and bodies:
+            gone_citable = [n for n in orphaned if n in bodies and not is_proof(bodies[n])]
+            kept_proofs = [n for n in bodies if n not in orphaned and is_proof(bodies[n])]
+            if gone_citable and kept_proofs:
+                notes.append(
+                    f"IRREPLACEABLE: -{gone_citable[0]} appears to be both the "
+                    f"orphan and the only copy with real page numbers; what "
+                    f"Mendeley still holds is the proof. Do not delete it")
+                irreplaceable += 1
         print(f"{key:<34}{len(extracts[key]):>9}{have:>13}  {'; '.join(notes)}")
     print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated, "
           f"{near} near-duplicate, {proofs} proof/published pairs.")
+    if irreplaceable:
+        print(f"{irreplaceable} of those orphans appear to be the ONLY citable copy "
+              "of their paper.")
 
     # Pairing only decides the cases that HAVE a pair. A proof filed on its own
     # reads as an ordinary paper, and its front matter invites a reader to cite
