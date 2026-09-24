@@ -627,6 +627,15 @@ def main():
     check(mm.strip_control("a\x01\x1f\x7fb") == "ab", "so are the other C0 controls and DEL")
     check(mm.strip_control("keep\tthis\nand this") == "keep\tthis\nand this",
           "tab and newline are text and are kept")
+    # CR is a line ending, not junk: deleting one joins two lines and collides
+    # the words either side. 820k survived the first version of this function.
+    check(mm.strip_control("reactor\r\nflow") == "reactor\nflow",
+          "CRLF becomes a newline, not a deletion")
+    check(mm.strip_control("reactor\rflow") == "reactor\nflow",
+          "and so does a lone CR, which older PDFs use as the line ending")
+    check("\r" not in mm.clean_page_text("a\r\nb\rc"), "no CR survives extraction")
+    check(mm.strip_control("reactor\r\nflow").count("\n") == 1,
+          "CRLF does not become two newlines")
     check(mm.clean_page_text("Polyethylene\x00 Terephthalate").find("\x00") == -1,
           "clean_page_text strips them, so no extract is written with one")
 

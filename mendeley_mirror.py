@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1064,7 +1064,18 @@ CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 
 
 def strip_control(text: str) -> str:
-    """Remove control characters that make a text file unsearchable."""
+    """Normalize line endings, then remove control characters.
+
+    Carriage returns are NORMALIZED rather than deleted, because they are line
+    endings and deleting one joins two lines into a word-collision. The first
+    version of this stripped C0 "keeping tab and newline" and quietly kept CR
+    too, which is neither: 820k of them survived, embedded in the text rather
+    than at the ends of lines, in files whose other lines end in a bare \n. An
+    anchored search then fails on them -- `grep 'reactor$'` does not match a line
+    ending "reactor\r" -- which is the same silent-zero family as the NUL, just
+    narrower.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return CONTROL_CHARS.sub("", text)
 
 
