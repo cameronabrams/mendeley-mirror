@@ -840,6 +840,40 @@ def main():
     check("NEAR-DUPLICATE" in r2 and "-3 is" in r2,
           "its two extracts are compared against EACH OTHER, not against a base "
           "that does not exist")
+    # A near-duplicate pair can be a proof and its published version. That is the
+    # one difference that changes what may be CITED: Abrams2012Fly's two extracts
+    # are 98.34% alike and differ in xxx -> 547, xxx-xxx -> 114-119.
+    check(getpdf.is_proof("in press, xxx\u2013xxx, 2012") == 1,
+          "placeholder page range is recognized as a proof")
+    check(getpdf.is_proof("J. Am. Chem. Soc. XXXX, XXX, 000\u2013000") == 2,
+          "the galley form counts both of its placeholders")
+    check(getpdf.is_proof("Chem. Phys. Lett. 547, 114\u2013119") == 0,
+          "a real page range is not a proof")
+    check(getpdf.is_proof("sample 000-000 of the xxx series") >= 1,
+          "and the zero form is caught with a plain hyphen too")
+
+    pf = tmp / "proofpair"; (pf / "text").mkdir(parents=True)
+    common = "".join(f"<!-- p. {n} -->\n\n" + ("shared sentence here. " * 60) + "\n"
+                     for n in range(1, 4))
+    (pf / "text" / "Prf2012Paper.md").write_text(
+        common + "Chem. Phys. Lett. xxx, xxx\u2013xxx\n", encoding="utf-8")
+    (pf / "text" / "Prf2012Paper-2.md").write_text(
+        common + "Chem. Phys. Lett. 547, 114\u2013119\n", encoding="utf-8")
+    bk3 = {"Prf2012Paper": "d7"}
+
+    class TwoEach:
+        def paged(self, path, kind, **kw):
+            return [{"document_id": "d7", "mime_type": "application/pdf"}] * 2
+
+    buf3 = io.StringIO()
+    with contextlib.redirect_stdout(buf3):
+        getpdf.attachment_inventory(TwoEach(), pf, bk3, [])
+    r3 = buf3.getvalue()
+    check("PAGINATION" in r3, "a proof/published pair is called out as such")
+    check("cite -2" in r3, "and the reader is told WHICH one to cite")
+    check("100.00%" not in r3,
+          "a ratio short of equality never prints as 100.00% beside DUPLICATE rows")
+
     b2 = getpdf.extract_body(nb / "text" / "NoBase2011How-2.md")
     b3 = getpdf.extract_body(nb / "text" / "NoBase2011How-3.md")
     check(b2 != b3, "the two bodies are not identical, so exact equality finds nothing")

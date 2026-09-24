@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import os
 import difflib
+import math
 import re
 import subprocess
 import sys
@@ -107,6 +108,25 @@ def choose_attachment(pdfs: list, out: Path, key: str, nth: int) -> tuple[dict |
 
 NEAR = 0.98      # two extracts this alike are one paper, not two
 
+# Placeholder pagination, as a proof or galley carries it before the page numbers
+# are assigned: "xxx-xxx", "XXXX, XXX, 000-000". Built from the forms actually
+# present in this library rather than guessed -- 14 extracts carry one.
+PROOF_PAGES = re.compile(r"(?:[xX]{3,}\s*[-\u2013\u2014]\s*[xX]{3,})"
+                         r"|(?:\b0{3}\s*[-\u2013\u2014]\s*0{3}\b)"
+                         r"|(?:XXXX,\s*XXX)")
+
+
+def is_proof(body: str) -> int:
+    """How many placeholder page ranges an extract carries; 0 for a published one.
+
+    The difference that decides what may be CITED. Abrams2012Fly's two extracts
+    are 98.34% alike and differ, essentially, in three places: xxx -> 547,
+    xxx-xxx -> 114-119, xxxx -> 10 August 2012. One is the accepted proof and the
+    other the version of record. Telling a reader they are near-duplicates and
+    stopping there invites them to cite the copy that has no page numbers.
+    """
+    return len(PROOF_PAGES.findall(body))
+
 
 def extract_body(path: Path) -> str:
     """An extract's text from the first page marker on, without its front matter.
@@ -167,7 +187,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
             counts[key] = counts.get(key, 0) + 1
 
     interesting = sorted(k for k, v in extracts.items() if len(v) > 1 or keys)
-    orphans = dupes = near = 0
+    orphans = dupes = near = proofs = 0
     print(f"{'key':<34}{'extracts':>9}{'attachments':>13}  note")
     for key in interesting:
         have, want = counts.get(key, 0), max(extracts[key])
@@ -199,13 +219,26 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
                     r = difflib.SequenceMatcher(None, bodies[a], bodies[b])
                     if r.real_quick_ratio() >= NEAR and r.quick_ratio() >= NEAR \
                             and r.ratio() >= NEAR:
-                        notes.append(f"NEAR-DUPLICATE: -{b} is {r.ratio():.2%} "
-                                     f"the same as {'the base' if a == 1 else f'-{a}'}"
-                                     " -- check before citing both")
+                        # Floor rather than round: 0.999919 printed as "100.00%"
+                        # beside an exact DUPLICATE row reads as a contradiction,
+                        # and two decimals of a ratio that close is false
+                        # precision anyway.
+                        pct = math.floor(r.ratio() * 10000) / 100
+                        which = "the base" if a == 1 else f"-{a}"
+                        notes.append(f"NEAR-DUPLICATE: -{b} is {pct:.2f}% the same "
+                                     f"as {which} -- check before citing both")
                         near += 1
+                        pa, pb = is_proof(bodies[a]), is_proof(bodies[b])
+                        if (pa > 0) != (pb > 0):
+                            proof = which if pa else f"-{b}"
+                            real = f"-{b}" if pa else which
+                            notes.append(f"PAGINATION: {proof} is an unpaginated "
+                                         f"proof, {real} is the published version "
+                                         f"-- cite {real}")
+                            proofs += 1
         print(f"{key:<34}{len(extracts[key]):>9}{have:>13}  {'; '.join(notes)}")
     print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated, "
-          f"{near} near-duplicate.")
+          f"{near} near-duplicate, {proofs} proof/published pairs.")
     if orphans:
         print("An ORPHANED extract cannot be re-fetched and may be the only copy "
               "left of that document. Do not delete it to force a re-extraction.")

@@ -170,6 +170,31 @@ hypothesis and the wrong-claim rate did not move at all.
 
 ---
 
+## 5. Mark a proof extract at extraction, not at inspection
+
+**Why.** Fourteen extracts in this library carry placeholder pagination —
+`xxx–xxx`, `XXXX, XXX, 000–000` — because the PDF is an accepted proof rather
+than the version of record. Nothing says so. `get_pdf.py --attachments` now
+reports it for records that have *two* extracts, because a proof beside its
+published twin is where the difference is decidable; a proof filed on its own
+looks exactly like a normal paper and reads as one.
+
+The consequence is specific: an extract's own front matter invites a reader to
+cite it, and the page markers of a proof are not the journal's pages. It is the
+same failure family as the OCR'd scans, where `ocr: true` and a banner were
+added precisely so a machine-read extract could not be quoted as if typeset.
+
+- [ ] Detect placeholder pagination during extraction and record it in the front
+      matter, the way `ocr: true` is recorded, with a line in the extract saying
+      the page numbers are not citable.
+- [ ] Announce it first: this changes `text/<key>.md`, which is a contract, and
+      it only takes effect on re-extraction.
+- [ ] Consider whether `finding.py` should refuse to derive an offset from a
+      proof at all. It currently will, and the number it produces is real
+      arithmetic over meaningless input.
+
+---
+
 ## Renamed, and what still carries the old name
 
 The project became **offprint** on 2026-09-21, in anticipation of Zotero: a module
