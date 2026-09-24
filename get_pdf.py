@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import difflib
 import re
 import subprocess
 import sys
@@ -104,6 +105,9 @@ def choose_attachment(pdfs: list, out: Path, key: str, nth: int) -> tuple[dict |
     return pdfs[nth - 1], f"attachment {nth} of {len(pdfs)}"
 
 
+NEAR = 0.98      # two extracts this alike are one paper, not two
+
+
 def extract_body(path: Path) -> str:
     """An extract's text from the first page marker on, without its front matter.
 
@@ -143,8 +147,13 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
     * ORPHAN: the mirror wrote text/<key>-N.md but Mendeley no longer reports
       that many attachments. The extract may be the ONLY remaining copy of that
       document, so it must not be treated as regenerable.
-    * DUPLICATE: a -N extract whose body equals the base. The same file attached
-      twice; nothing is lost by ignoring it, and a search hits the paper twice.
+    * DUPLICATE: two extracts of one record with the same body. The same file
+      attached twice; nothing is lost by ignoring it, and a search hits the paper
+      twice. NEAR-DUPLICATE is the same thing where the two differ slightly, as
+      two scans of one article do; it is a prompt to look, not a verdict.
+    * NO BASE: the first attachment produced no extract at all, so text/<key>.md
+      does not exist and only <key>-2 onward do. Such a record appears in
+      index.md and library.bib but in no extraction report.
     """
     extracts = local_extracts(out, by_key)
     if keys:
@@ -158,7 +167,7 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
             counts[key] = counts.get(key, 0) + 1
 
     interesting = sorted(k for k, v in extracts.items() if len(v) > 1 or keys)
-    orphans = dupes = 0
+    orphans = dupes = near = 0
     print(f"{'key':<34}{'extracts':>9}{'attachments':>13}  note")
     for key in interesting:
         have, want = counts.get(key, 0), max(extracts[key])
@@ -166,16 +175,37 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
         if want > have:
             notes.append(f"ORPHAN: -{want} has no attachment in Mendeley")
             orphans += 1
-        base_file = out / "text" / f"{key}.md"
-        for n in extracts[key]:
-            if n == 1 or not base_file.exists():
-                continue
-            sib = out / "text" / f"{key}-{n}.md"
-            if sib.exists() and extract_body(sib) == extract_body(base_file):
-                notes.append(f"DUPLICATE: -{n} body equals the base")
-                dupes += 1
+        # Compare every PAIR of extracts this record actually has, not each one
+        # against the base. Shan2011How has no base -- its first attachment was
+        # not a PDF -- so a base-anchored comparison examined nothing and its two
+        # extracts of the same paper went unflagged.
+        present = [(n, out / "text" / (f"{key}.md" if n == 1 else f"{key}-{n}.md"))
+                   for n in extracts[key]]
+        present = [(n, f) for n, f in present if f.exists()]
+        if 1 not in [n for n, _ in present]:
+            notes.append("NO BASE: the first attachment produced no extract")
+        bodies = {n: extract_body(f) for n, f in present}
+        for i, a in enumerate(sorted(bodies)):
+            for b in sorted(bodies)[i + 1:]:
+                if bodies[a] == bodies[b]:
+                    notes.append(f"DUPLICATE: -{b} body equals -{a}"
+                                 if a != 1 else f"DUPLICATE: -{b} body equals the base")
+                    dupes += 1
+                else:
+                    # Exact equality is not enough. Shan2011How's two extracts are
+                    # the same paper at 0.9935 -- two scans of one article differ
+                    # in a handful of characters, and a strict test calls them
+                    # distinct. This is a prompt to look, not a verdict.
+                    r = difflib.SequenceMatcher(None, bodies[a], bodies[b])
+                    if r.real_quick_ratio() >= NEAR and r.quick_ratio() >= NEAR \
+                            and r.ratio() >= NEAR:
+                        notes.append(f"NEAR-DUPLICATE: -{b} is {r.ratio():.2%} "
+                                     f"the same as {'the base' if a == 1 else f'-{a}'}"
+                                     " -- check before citing both")
+                        near += 1
         print(f"{key:<34}{len(extracts[key]):>9}{have:>13}  {'; '.join(notes)}")
-    print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated.")
+    print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated, "
+          f"{near} near-duplicate.")
     if orphans:
         print("An ORPHANED extract cannot be re-fetched and may be the only copy "
               "left of that document. Do not delete it to force a re-extraction.")

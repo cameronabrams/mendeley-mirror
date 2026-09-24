@@ -812,6 +812,37 @@ def main():
           "a record whose attachments match its extracts is not flagged as orphaned")
     check("Solo2001Single" not in report,
           "a single-extract record is not in a sweep about multiple attachments")
+
+    # The gap literature found: comparing each -N against the BASE examines
+    # nothing when there is no base. Shan2011How's first attachment was not a
+    # PDF, so only -2 and -3 exist and its two extracts of one paper went
+    # unflagged. And exact equality would have missed them anyway -- they are
+    # 0.9935 alike, not identical.
+    nb = tmp / "nobase"; (nb / "text").mkdir(parents=True)
+    long_body = "".join(f"<!-- p. {n} -->\n\n" + ("the same paper text " * 40) + "\n"
+                        for n in range(1, 6))
+    (nb / "text" / "NoBase2011How-2.md").write_text(long_body, encoding="utf-8")
+    (nb / "text" / "NoBase2011How-3.md").write_text(
+        long_body.replace("same paper text", "same paper txet", 1), encoding="utf-8")
+    bk2 = {"NoBase2011How": "d9"}
+    check(getpdf.local_extracts(nb, bk2)["NoBase2011How"] == [2, 3],
+          "a record with no base extract is still seen, as -2 and -3")
+
+    class OneEach:
+        def paged(self, path, kind, **kw):
+            return [{"document_id": "d9", "mime_type": "application/pdf"}] * 3
+
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        getpdf.attachment_inventory(OneEach(), nb, bk2, [])
+    r2 = buf2.getvalue()
+    check("NO BASE" in r2, "and is reported as having produced no first extract")
+    check("NEAR-DUPLICATE" in r2 and "-3 is" in r2,
+          "its two extracts are compared against EACH OTHER, not against a base "
+          "that does not exist")
+    b2 = getpdf.extract_body(nb / "text" / "NoBase2011How-2.md")
+    b3 = getpdf.extract_body(nb / "text" / "NoBase2011How-3.md")
+    check(b2 != b3, "the two bodies are not identical, so exact equality finds nothing")
     check("only copy" in report, "the sweep says why an orphan must not be deleted")
 
     print("\non-demand PDF fetch (get_pdf.py)")

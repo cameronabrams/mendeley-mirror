@@ -77,9 +77,20 @@ different problems:
   reports that many attachments. The file was deleted from Mendeley after it was
   extracted, so **the extract may be the only remaining copy of that document.**
   It cannot be regenerated, and it must not be deleted to force a re-extraction.
-- **DUPLICATE** — a `-N` extract whose body matches the base: the same file
+- **DUPLICATE** — two extracts of one record with the same body: the same file
   attached twice. Nothing is lost by ignoring it, though a search will hit the
   paper twice.
+- **NEAR-DUPLICATE** — the same, where the two differ slightly, as two scans of
+  one article do. A prompt to look, not a verdict: exact equality is too strict
+  to catch these, and `Shan2011How`'s two extracts are the same paper at 99.3%.
+- **NO BASE** — the first attachment produced no extract, so `text/<key>.md` does
+  not exist and only `<key>-2` onward do. Such a record is in `index.md` and
+  `library.bib` but appears in no extraction report, which is worth knowing
+  before concluding the mirror does not have the paper.
+
+Every pair of a record's extracts is compared, not each one against the base —
+with no base there is nothing to compare against, and that is exactly the case
+where two copies of one paper hide.
 
 The bodies are compared rather than the files, because the front matter names the
 key and so `<key>-2.md` and `<key>.md` always differ as bytes even when they came
