@@ -37,7 +37,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 """The tool's version, and the only place it is written down.
 
 It exists so a mirror can say what produced it. Extraction behaviour has changed
@@ -1164,7 +1164,7 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         # Not cosmetic: an unqualified file id from a second backend would collide
         # here and skip an extraction as "already done".
         note(f"  namespaced {migrated} attachment ids as {BACKEND}:<id>")
-    fetched = skipped = failed = reused = 0
+    fetched = skipped = failed = reused = unresolved = 0
     report: list = []
     state_path = state_path or mirror_state_dir(out) / "state.json"
 
@@ -1172,9 +1172,14 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
     seen = 0
     try:
         for doc_id, files in files_by_doc.items():
-            key = keymap.get(doc_id)
+            # keymap is keyed by NAMESPACED id and persists between runs; the maps
+            # built from this run's API response are keyed by bare id and do not.
+            # This is the one place the two meet, and getting it wrong here skips
+            # every attachment without raising anything.
+            key = keymap.get(qualify(doc_id))
             doc = docs_by_id.get(doc_id)
             if not key or not doc:
+                unresolved += 1
                 continue
             for i, f in enumerate(files):
                 seen += 1
@@ -1279,6 +1284,23 @@ def harvest_attachments(client: Mendeley, files_by_doc: dict, keymap: dict,
         pdf_dir.rmdir()
     if reused:
         note(f"  re-used {reused} PDFs already on disk (no re-download)")
+    if unresolved:
+        note(f"  ! {unresolved} documents had attachments but no citation key, "
+             "and were skipped")
+    # The invariant, and the reason it is here. On 2026-09-24 a namespacing change
+    # made every lookup on the line above miss, so every document was skipped by a
+    # guard written for the rare case of one unkeyed record. The run reported
+    # "0 extracted, 0 unchanged, 0 failed" against "up to 2733 attachments" and
+    # still wrote **ok** to the status file. Counting to zero is not an outcome
+    # this pass is allowed to report quietly: a new attachment would have gone
+    # unextracted with nothing to say so.
+    if total and not seen:
+        raise RuntimeError(
+            f"{total} attachments were listed but not one was examined: every "
+            f"document id failed to resolve to a citation key ({unresolved} "
+            f"unresolved). The mirror is not extracting anything -- this is a "
+            f"bug in the tool, not a problem with the account."
+        )
     return fetched, skipped, failed, report
 
 

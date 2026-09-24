@@ -399,7 +399,7 @@ def main():
     st = {}
     fetched, skipped, failed, rep_rows = mm.harvest_attachments(
         NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
-        {"d1": "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
+        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
     check(fetched == 1 and failed == 0, f"local PDF extracted without a download ({fetched=}, {failed=})")
     check((h_out / "text" / "Muller2020Yield.md").exists(), "text file written")
     check(not (h_out / "pdf" / "Muller2020Yield.pdf").exists(), "PDF discarded after extraction")
@@ -413,7 +413,7 @@ def main():
     st["files"][mm.qualify("x1")].update(status="ocr", detail="read by OCR", pages=2, chars=1234)
     fetched, skipped, failed, rep_rows = mm.harvest_attachments(
         NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
-        {"d1": "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
+        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, h_out, st, "text")
     check(skipped == 1 and fetched == 0, "an OCR'd attachment is not re-read on a plain refresh")
     ocr_rows = [r for r in rep_rows if r["status"] == "ocr"]
     check(len(ocr_rows) == 1 and ocr_rows[0]["key"] == "Muller2020Yield",
@@ -610,6 +610,50 @@ def main():
     except SystemExit as exc:
         check("scheduled run" in str(exc), "require_interactive explains itself and exits")
     mm.NONINTERACTIVE = False
+
+    # 2026-09-24: namespacing made keymap.get(doc_id) miss on every document, so
+    # every attachment was skipped by a guard written for the rare unkeyed record.
+    # The run reported "0 extracted, 0 unchanged, 0 failed" and still wrote **ok**.
+    # The fixtures did not catch it because THEY were keyed the old way too --
+    # a fixture that models the format the code just left cannot fail with it.
+    print("\na pass that examines nothing is a failure, not a zero")
+
+    def staged(name: str) -> Path:
+        """A harvest dir with the PDF already on disk, so NoNetwork is not hit."""
+        d = tmp / name
+        (d / "pdf").mkdir(parents=True)
+        (d / "pdf" / "Muller2020Yield.pdf").write_bytes(pdf_bytes)
+        return d
+
+    st2 = {}
+    fetched2, _s2, _f2, _r2 = mm.harvest_attachments(
+        NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns"), st2, "text")
+    check(fetched2 == 1,
+          "a namespaced keymap resolves an API id that is bare, and extraction runs")
+
+    # And the shape of the bug itself: nothing resolves, so nothing is examined.
+    try:
+        mm.harvest_attachments(
+            NoNetwork(), {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}]},
+            {"stale-unqualified-d1": "Muller2020Yield"}, {"d1": DOCS[0]},
+            staged("ns2"), {}, "text")
+        check(False, "a keymap that resolves nothing raises rather than reporting zeros")
+    except RuntimeError as exc:
+        check("not one was examined" in str(exc),
+              "a keymap that resolves nothing raises rather than reporting zeros")
+        check("bug in the tool" in str(exc),
+              "and says it is the tool's fault, not the account's")
+
+    # An genuinely unkeyed document among many must NOT raise -- that is the case
+    # the guard was written for, and it still has to work.
+    st3 = {}
+    f3, _s3, _f3, _r3 = mm.harvest_attachments(
+        NoNetwork(),
+        {"d1": [{"id": "x1", "mime_type": "application/pdf", "filehash": "h1"}],
+         "dX": [{"id": "x9", "mime_type": "application/pdf", "filehash": "h9"}]},
+        {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns3"), st3, "text")
+    check(f3 == 1, "one unkeyed document among several is skipped, not raised over")
 
     print("\non-demand PDF fetch (get_pdf.py)")
     (out / ".mirror").mkdir(exist_ok=True)
