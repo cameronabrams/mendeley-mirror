@@ -719,6 +719,46 @@ def main():
         {mm.qualify("d1"): "Muller2020Yield"}, {"d1": DOCS[0]}, staged("ns3"), st3, "text")
     check(f3 == 1, "one unkeyed document among several is skipped, not raised over")
 
+    print("\nsecond attachments are reachable (get_pdf.py <key>-2)")
+    import get_pdf as getpdf
+
+    check(getpdf.split_attachment("Abrams2012Fly-2") == ("Abrams2012Fly", 2),
+          "a -2 suffix names the second attachment")
+    check(getpdf.split_attachment("Abrams2012Fly") == ("Abrams2012Fly", 1),
+          "a plain key is the first")
+    check(getpdf.split_attachment("Brenner1990Empirical-3") == ("Brenner1990Empirical", 3),
+          "and -3 the third")
+    # Citation keys can legitimately end in a digit-ish tail; only -N with N>=2
+    # is an attachment selector, and -1 is not one because nothing writes it.
+    check(getpdf.split_attachment("Abrams2013Enhanced-1") == ("Abrams2013Enhanced-1", 1),
+          "-1 is not an attachment selector: the mirror never writes that name")
+    check(getpdf.split_attachment("Covid19Study") == ("Covid19Study", 1),
+          "a key with digits inside is not split")
+
+    pdfs = [{"id": "a", "mime_type": "application/pdf"},
+            {"id": "b", "mime_type": "application/pdf"}]
+    got, why = getpdf.choose_attachment(pdfs, out, "Whatever", 2)
+    check(got and got["id"] == "b" and "2 of 2" in why, "the second is chosen and named")
+    got1, _ = getpdf.choose_attachment(pdfs, out, "Whatever", 1)
+    check(got1 and got1["id"] == "a", "the first is still the default")
+    none, why3 = getpdf.choose_attachment(pdfs, out, "Whatever", 3)
+    check(none is None and "only 2" in why3,
+          "asking for one that does not exist says so rather than serving another")
+    empty, why0 = getpdf.choose_attachment([], out, "Whatever", 1)
+    check(empty is None and "no PDF" in why0, "and no attachment at all is its own message")
+
+    # The Brenner shape: the extract for -2 records 14 pages, the served file has
+    # 1. That mismatch is what the post-download check exists to catch.
+    (out / "text").mkdir(exist_ok=True)
+    (out / "text" / "Brenner1990Empirical-2.md").write_text(
+        "\n".join(f"<!-- p. {i} -->\n\ntext\n" for i in range(1, 15)), encoding="utf-8")
+    check(getpdf.extract_pages(out, "Brenner1990Empirical-2") == 14,
+          "page count is read from the -2 extract, not the base one")
+    one_pager = out / "one.pdf"
+    one_pager.write_bytes(pdf_bytes)      # the fixture PDF has 2 pages, not 14
+    check(getpdf.cache_is_the_right_paper(one_pager, out, "Brenner1990Empirical-2") is False,
+          "a served file with the wrong page count is refused for a -2 key too")
+
     print("\non-demand PDF fetch (get_pdf.py)")
     (out / ".mirror").mkdir(exist_ok=True)
     (out / ".mirror" / "citekeys.json").write_text(json.dumps(keymap), encoding="utf-8")

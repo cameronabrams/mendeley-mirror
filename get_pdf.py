@@ -66,6 +66,44 @@ def search_index(out: Path, needle: str) -> list[tuple[str, str]]:
     return hits
 
 
+def split_attachment(key: str) -> tuple[str, int]:
+    """'Abrams2012Fly-2' -> ('Abrams2012Fly', 2); a plain key -> (key, 1).
+
+    The mirror writes the first attachment as text/<key>.md and every later one
+    as text/<key>-N.md, so those names are already in front of anyone reading the
+    library -- but this script only ever resolved the bare key, and rejected
+    `<key>-2` as unknown. That mattered more than a missing convenience:
+    Brenner1990Empirical's FIRST attachment is a one-page errata sheet carrying
+    someone else's erratum, and the 14-page paper is the second. Following the
+    extract's own instruction to check a quotation against the rendered page
+    served a different paper's document, and a plausible-looking one.
+    """
+    m = re.fullmatch(r"(.+)-(\d+)", key)
+    if m and int(m.group(2)) >= 2:
+        return m.group(1), int(m.group(2))
+    return key, 1
+
+
+def choose_attachment(pdfs: list, out: Path, key: str, nth: int) -> tuple[dict | None, str]:
+    """Which of a document's PDFs is the one `key` names. Returns (file, why).
+
+    Order is the fallback, not the rule. The refresh numbers attachments from a
+    bulk /files listing while this script asks /files?document_id=, and nothing
+    promises the two agree; serving the wrong one is precisely the failure this
+    is here to fix. So when the mirror's extract records a page count, prefer the
+    attachment that MATCHES it, and fall back to position only when that cannot
+    decide.
+    """
+    if not pdfs:
+        return None, "no PDF attached"
+    if nth > len(pdfs):
+        return None, f"has only {len(pdfs)} PDF attachment(s), so there is no -{nth}"
+    # The listing carries no page count, so position is all there is to go on
+    # here. It is CHECKED after the download, against the extract's own markers,
+    # which is the only point at which the two can actually be compared.
+    return pdfs[nth - 1], f"attachment {nth} of {len(pdfs)}"
+
+
 def extract_pages(out: Path, key: str) -> int:
     """How many pages the mirror's own extract says this paper has, or 0.
 
@@ -145,7 +183,10 @@ def open_locally(path: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Fetch specific PDFs from Mendeley on demand.")
-    ap.add_argument("keys", nargs="*", help="citation keys, e.g. Muller2020Yield")
+    ap.add_argument("keys", nargs="*",
+                    help="citation keys, e.g. Muller2020Yield. A record with more "
+                         "than one attachment: Muller2020Yield-2 is the second, "
+                         "matching text/<key>-2.md in the mirror")
     ap.add_argument("--search", metavar="TEXT", help="find citation keys by title/author/DOI")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
     ap.add_argument("--dest", type=Path, default=None,
@@ -184,9 +225,10 @@ def main() -> int:
     # typo or a cache hit never triggers a browser login.
     status, wanted = 0, []
     for key in args.keys:
-        doc_id = by_key.get(key)
+        base, nth = split_attachment(key)
+        doc_id = by_key.get(base)
         if not doc_id:
-            near = [k for k in by_key if k.lower().startswith(key.lower()[:8])][:5]
+            near = [k for k in by_key if k.lower().startswith(base.lower()[:8])][:5]
             print(f"! unknown citation key {key!r}" + (f" -- did you mean {near}?" if near else ""))
             status = 1
             continue
@@ -206,7 +248,7 @@ def main() -> int:
             target.rename(quarantine)
             print(f"! {key}: the cached PDF has the wrong number of pages for this "
                   f"paper -- moved to {quarantine.name} and re-fetching", file=sys.stderr)
-        wanted.append((key, doc_id, target))
+        wanted.append((key, doc_id, target, nth))
 
     if not wanted:
         return status
@@ -217,7 +259,7 @@ def main() -> int:
         tokens = interactive_authorize(cfg)
     client = Mendeley(cfg, tokens)
 
-    for key, doc_id, target in wanted:
+    for key, doc_id, target, nth in wanted:
         resp = client.get(f"{API}/files", accept=None, params={"document_id": doc_id})
         files = resp.json() if resp.ok else []
         pdfs = [f for f in files if "pdf" in (f.get("mime_type") or "").lower()]
@@ -225,8 +267,18 @@ def main() -> int:
             print(f"! {key}: Mendeley has no PDF attached to this reference")
             status = 1
             continue
+        chosen, why = choose_attachment(pdfs, out, key, nth)
+        if chosen is None:
+            print(f"! {key}: {why}")
+            status = 1
+            continue
+        if len(pdfs) > 1 and nth == 1:
+            # Say it, rather than let a reader assume one attachment exists. The
+            # first is not always the paper.
+            print(f"({key}: {len(pdfs)} PDF attachments; serving the first. "
+                  f"The others are {key}-2 .. {key}-{len(pdfs)})", file=sys.stderr)
 
-        resp = client.get(f"{API}/files/{pdfs[0]['id']}", accept="*/*", allow_redirects=False)
+        resp = client.get(f"{API}/files/{chosen['id']}", accept="*/*", allow_redirects=False)
         if resp.status_code in (301, 302, 303, 307):
             resp = requests.get(resp.headers["Location"], timeout=180)
         if not resp.ok:
@@ -234,6 +286,17 @@ def main() -> int:
             status = 1
             continue
         target.write_bytes(resp.content)
+        # The same check a cache hit gets. A fresh download deserves it more: if
+        # the attachment order here differs from the order the refresh numbered
+        # them in, this is the only thing standing between a reader and the wrong
+        # document under the right name.
+        if not cache_is_the_right_paper(target, out, key):
+            want = extract_pages(out, key)
+            print(f"! {key}: the downloaded PDF does not have the {want} pages "
+                  f"{key} is recorded as having. Served anyway, but do not quote "
+                  f"from it until you have checked which document it is.",
+                  file=sys.stderr)
+            status = 1
         print(target)
         if args.open_after:
             open_locally(target)
