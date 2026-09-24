@@ -874,6 +874,37 @@ def main():
     check("100.00%" not in r3,
           "a ratio short of equality never prints as 100.00% beside DUPLICATE rows")
 
+    # The case that gating PAGINATION on similarity missed. A proof and its
+    # published version have different page breaks, so the markers move and the
+    # pair drifts apart: Caparco2018Effect's two extracts are 4% alike and its
+    # base is the proof. Similarity is the wrong gate -- the closer the pair, the
+    # likelier it would be caught, which is backwards.
+    far = tmp / "farpair"; (far / "text").mkdir(parents=True)
+    (far / "text" / "Far2018Effect.md").write_text(
+        "<!-- p. 1 -->\n\n" + ("alpha beta gamma delta. " * 200)
+        + "\nAIChE J, 00: 000\u2013000, 2018\n", encoding="utf-8")
+    (far / "text" / "Far2018Effect-2.md").write_text(
+        "<!-- p. 1 -->\n\n" + ("entirely unrelated wording throughout. " * 200)
+        + "\nAIChE J, 64: 2934\u20132946, 2018\n", encoding="utf-8")
+    import difflib as _dl
+    ratio = _dl.SequenceMatcher(
+        None, getpdf.extract_body(far / "text" / "Far2018Effect.md"),
+        getpdf.extract_body(far / "text" / "Far2018Effect-2.md")).ratio()
+    check(ratio < getpdf.NEAR,
+          f"the pair is nowhere near duplicate ({ratio:.2f}), as the real one is not")
+    buf4 = io.StringIO()
+    with contextlib.redirect_stdout(buf4):
+        getpdf.attachment_inventory(TwoEach.__class__("S", (), {
+            "paged": lambda self, path, kind, **kw:
+                [{"document_id": "d8", "mime_type": "application/pdf"}] * 2})(),
+            far, {"Far2018Effect": "d8"}, [])
+    r4 = buf4.getvalue()
+    check("PAGINATION" in r4 and "cite -2" in r4,
+          "and it is STILL flagged as proof-versus-published, similarity aside")
+    check("NEAR-DUPLICATE" not in r4, "without being called a near-duplicate, which it is not")
+    check("placeholder pagination (1)" in r4,
+          "and the library-wide tail counts the proof extract on its own")
+
     b2 = getpdf.extract_body(nb / "text" / "NoBase2011How-2.md")
     b3 = getpdf.extract_body(nb / "text" / "NoBase2011How-3.md")
     check(b2 != b3, "the two bodies are not identical, so exact equality finds nothing")

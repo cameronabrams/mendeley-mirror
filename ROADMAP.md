@@ -174,10 +174,19 @@ hypothesis and the wrong-claim rate did not move at all.
 
 **Why.** Fourteen extracts in this library carry placeholder pagination —
 `xxx–xxx`, `XXXX, XXX, 000–000` — because the PDF is an accepted proof rather
-than the version of record. Nothing says so. `get_pdf.py --attachments` now
-reports it for records that have *two* extracts, because a proof beside its
-published twin is where the difference is decidable; a proof filed on its own
-looks exactly like a normal paper and reads as one.
+than the version of record. Nothing says so. `get_pdf.py --attachments` lists
+them and names which of a pair to cite, but that is a report someone has to run;
+a proof filed on its own still reads as a normal paper.
+
+Fourteen is this pattern's count, and it is not obviously the right one. A
+tighter pattern run by the library session found five, of which it judged one
+spurious — but that one, `Price2008Hydrogen`, is genuine: the line is the
+article's own ASAP footer, `Biochemistry XXXX, xxx, 000–000 … Published on Web
+05/22/2008`. Every one of the fourteen sits beside a journal name and a DOI on
+inspection, which is what an article-level footer looks like and not what a
+reference to someone else's in-press paper looks like. That is evidence, not
+proof, and the number should be settled by the extraction-time check below
+rather than by comparing two regexes.
 
 The consequence is specific: an extract's own front matter invites a reader to
 cite it, and the page markers of a proof are not the journal's pages. It is the

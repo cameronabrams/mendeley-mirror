@@ -205,6 +205,22 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
         if 1 not in [n for n, _ in present]:
             notes.append("NO BASE: the first attachment produced no extract")
         bodies = {n: extract_body(f) for n, f in present}
+        # Pagination is checked for EVERY pair, not only near-duplicate ones.
+        # Keying it off similarity was backwards: a proof and its published
+        # version have different page breaks, so the markers move and the pair
+        # drifts apart -- Caparco2018Effect's two extracts are 4% alike, and its
+        # base is the proof. The closer the pair, the likelier a similarity test
+        # catches it, which is exactly the wrong way round.
+        for i, a in enumerate(sorted(bodies)):
+            for b in sorted(bodies)[i + 1:]:
+                pa, pb = is_proof(bodies[a]), is_proof(bodies[b])
+                if (pa > 0) != (pb > 0):
+                    which = "the base" if a == 1 else f"-{a}"
+                    proof = which if pa else f"-{b}"
+                    real = f"-{b}" if pa else which
+                    notes.append(f"PAGINATION: {proof} is an unpaginated proof, "
+                                 f"{real} is not -- cite {real}")
+                    proofs += 1
         for i, a in enumerate(sorted(bodies)):
             for b in sorted(bodies)[i + 1:]:
                 if bodies[a] == bodies[b]:
@@ -228,17 +244,24 @@ def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
                         notes.append(f"NEAR-DUPLICATE: -{b} is {pct:.2f}% the same "
                                      f"as {which} -- check before citing both")
                         near += 1
-                        pa, pb = is_proof(bodies[a]), is_proof(bodies[b])
-                        if (pa > 0) != (pb > 0):
-                            proof = which if pa else f"-{b}"
-                            real = f"-{b}" if pa else which
-                            notes.append(f"PAGINATION: {proof} is an unpaginated "
-                                         f"proof, {real} is the published version "
-                                         f"-- cite {real}")
-                            proofs += 1
         print(f"{key:<34}{len(extracts[key]):>9}{have:>13}  {'; '.join(notes)}")
     print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated, "
           f"{near} near-duplicate, {proofs} proof/published pairs.")
+
+    # Pairing only decides the cases that HAVE a pair. A proof filed on its own
+    # reads as an ordinary paper, and its front matter invites a reader to cite
+    # page markers that are not the journal's pages. This needs no network, so
+    # it costs nothing to say here.
+    alone = []
+    for path in sorted((out / "text").glob("*.md")):
+        n = is_proof(extract_body(path))
+        if n:
+            alone.append((path.stem, n))
+    if alone:
+        print(f"\nExtracts carrying placeholder pagination ({len(alone)}). Their page"
+              "\nmarkers are the proof's, not the journal's, and are not citable:")
+        for stem, n in alone:
+            print(f"  {stem:<34}{n:>4} placeholder(s)")
     if orphans:
         print("An ORPHANED extract cannot be re-fetched and may be the only copy "
               "left of that document. Do not delete it to force a re-extraction.")
