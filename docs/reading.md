@@ -62,3 +62,25 @@ attachments says so on stderr and names the others. And a downloaded file whose
 page count does not match what the extract records is served with a warning and
 a non-zero exit, because the order this script sees is not promised to be the
 order the refresh numbered them in.
+
+### Which records actually have a second attachment
+
+```
+uv run --script get_pdf.py --attachments
+```
+
+One bulk listing, no downloads. It reports, for every record with more than one
+extract, how many PDF attachments Mendeley currently holds — and names two
+different problems:
+
+- **ORPHAN** — the mirror wrote `text/<key>-N.md` but the account no longer
+  reports that many attachments. The file was deleted from Mendeley after it was
+  extracted, so **the extract may be the only remaining copy of that document.**
+  It cannot be regenerated, and it must not be deleted to force a re-extraction.
+- **DUPLICATE** — a `-N` extract whose body matches the base: the same file
+  attached twice. Nothing is lost by ignoring it, though a search will hit the
+  paper twice.
+
+The bodies are compared rather than the files, because the front matter names the
+key and so `<key>-2.md` and `<key>.md` always differ as bytes even when they came
+from the same PDF.

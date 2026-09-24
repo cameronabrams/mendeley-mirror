@@ -759,6 +759,61 @@ def main():
     check(getpdf.cache_is_the_right_paper(one_pager, out, "Brenner1990Empirical-2") is False,
           "a served file with the wrong page count is refused for a -2 key too")
 
+    print("\nattachment inventory: orphans and duplicates, without downloading")
+
+    inv = tmp / "inv"; (inv / "text").mkdir(parents=True)
+    BODY = "".join(f"<!-- p. {n} -->\n\nbody text\n" for n in range(1, 4))
+    def _ex(name, body=BODY, front=True):
+        head = f"---\nkey: {name}\n---\n*Cite as `{name}`*\n\n" if front else ""
+        (inv / "text" / f"{name}.md").write_text(head + body, encoding="utf-8")
+    _ex("Real2020Paper"); _ex("Real2020Paper-2", BODY + "genuinely different\n")
+    _ex("Orphan2009Methods"); _ex("Orphan2009Methods-2")      # same body: duplicate too
+    _ex("Solo2001Single")
+    _ex("Odd2020Name-2")            # a citekey that itself ends in -2
+    bk = {"Real2020Paper": "d1", "Orphan2009Methods": "d2",
+          "Solo2001Single": "d3", "Odd2020Name-2": "d4"}
+
+    found = getpdf.local_extracts(inv, bk)
+    check(found["Real2020Paper"] == [1, 2], "both extracts of a record are seen")
+    check(found["Solo2001Single"] == [1], "a single extract is seen as one")
+    check(found["Odd2020Name-2"] == [1],
+          "a citation key that itself ends in -2 is a key, not an attachment number")
+
+    # The front matter names the key, so these files always differ as bytes.
+    # Comparing bodies is what distinguishes a second document from a second copy.
+    a = inv / "text" / "Orphan2009Methods.md"
+    b = inv / "text" / "Orphan2009Methods-2.md"
+    check(a.read_bytes() != b.read_bytes(), "the two files differ as bytes")
+    check(getpdf.extract_body(a) == getpdf.extract_body(b),
+          "but their bodies are identical -- the same PDF attached twice")
+    check(getpdf.extract_body(inv / "text" / "Real2020Paper-2.md")
+          != getpdf.extract_body(inv / "text" / "Real2020Paper.md"),
+          "while a genuine second document differs")
+
+    class FilesStub:
+        """Mendeley reports two attachments for d1 and only one for d2."""
+        def paged(self, path, kind, **kw):
+            return [{"document_id": "d1", "mime_type": "application/pdf"},
+                    {"document_id": "d1", "mime_type": "application/pdf"},
+                    {"document_id": "d2", "mime_type": "application/pdf"},
+                    {"document_id": "d2", "mime_type": "text/plain"},
+                    {"document_id": "d3", "mime_type": "application/pdf"}]
+
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = getpdf.attachment_inventory(FilesStub(), inv, bk, [])
+    report = buf.getvalue()
+    check(rc == 1, "an orphan makes the sweep exit non-zero")
+    check("Orphan2009Methods" in report and "ORPHAN" in report,
+          "the record whose -2 has no attachment is named")
+    check("DUPLICATE" in report, "and a -2 that merely repeats the base is called out")
+    check("Real2020Paper" in report and "ORPHAN: -2" not in report.split("Orphan")[0],
+          "a record whose attachments match its extracts is not flagged as orphaned")
+    check("Solo2001Single" not in report,
+          "a single-extract record is not in a sweep about multiple attachments")
+    check("only copy" in report, "the sweep says why an orphan must not be deleted")
+
     print("\non-demand PDF fetch (get_pdf.py)")
     (out / ".mirror").mkdir(exist_ok=True)
     (out / ".mirror" / "citekeys.json").write_text(json.dumps(keymap), encoding="utf-8")

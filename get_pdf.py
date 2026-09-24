@@ -104,6 +104,84 @@ def choose_attachment(pdfs: list, out: Path, key: str, nth: int) -> tuple[dict |
     return pdfs[nth - 1], f"attachment {nth} of {len(pdfs)}"
 
 
+def extract_body(path: Path) -> str:
+    """An extract's text from the first page marker on, without its front matter.
+
+    The front matter names the key, so <key>-2.md and <key>.md always differ as
+    bytes even when they came from the same PDF. Comparing bodies is what tells a
+    genuine second document from the same file attached twice.
+    """
+    t = path.read_text(encoding="utf-8", errors="replace")
+    i = t.find("<!-- p. 1 -->")
+    return t[i:] if i >= 0 else t
+
+
+def local_extracts(out: Path, by_key: dict) -> dict:
+    """{citekey: [1, 2, ...]} -- which attachment numbers the mirror has written."""
+    found: dict[str, list] = {}
+    for path in sorted((out / "text").glob("*.md")):
+        stem = path.stem
+        if stem in by_key:                 # a key that merely ends in -N is a key
+            found.setdefault(stem, []).append(1)
+            continue
+        base, n = split_attachment(stem)
+        if base in by_key:
+            found.setdefault(base, []).append(n)
+    return {k: sorted(set(v)) for k, v in found.items()}
+
+
+def attachment_inventory(client, out: Path, by_key: dict, keys: list) -> int:
+    """Report attachments held per key against extracts written, downloading none.
+
+    One bulk /files call answers this for the whole library. The alternative --
+    asking per document, or fetching to find out -- is 72 requests to learn
+    something the account will tell you in one, which is the difference between a
+    sweep somebody repeats and a sweep nobody runs twice.
+
+    Two things it finds, and they are different problems:
+
+    * ORPHAN: the mirror wrote text/<key>-N.md but Mendeley no longer reports
+      that many attachments. The extract may be the ONLY remaining copy of that
+      document, so it must not be treated as regenerable.
+    * DUPLICATE: a -N extract whose body equals the base. The same file attached
+      twice; nothing is lost by ignoring it, and a search hits the paper twice.
+    """
+    extracts = local_extracts(out, by_key)
+    if keys:
+        extracts = {k: v for k, v in extracts.items() if k in keys}
+    doc_to_key = {v: k for k, v in by_key.items()}
+
+    counts: dict[str, int] = {}
+    for f in client.paged("/files", "files"):
+        key = doc_to_key.get(f.get("document_id"))
+        if key and "pdf" in (f.get("mime_type") or "").lower():
+            counts[key] = counts.get(key, 0) + 1
+
+    interesting = sorted(k for k, v in extracts.items() if len(v) > 1 or keys)
+    orphans = dupes = 0
+    print(f"{'key':<34}{'extracts':>9}{'attachments':>13}  note")
+    for key in interesting:
+        have, want = counts.get(key, 0), max(extracts[key])
+        notes = []
+        if want > have:
+            notes.append(f"ORPHAN: -{want} has no attachment in Mendeley")
+            orphans += 1
+        base_file = out / "text" / f"{key}.md"
+        for n in extracts[key]:
+            if n == 1 or not base_file.exists():
+                continue
+            sib = out / "text" / f"{key}-{n}.md"
+            if sib.exists() and extract_body(sib) == extract_body(base_file):
+                notes.append(f"DUPLICATE: -{n} body equals the base")
+                dupes += 1
+        print(f"{key:<34}{len(extracts[key]):>9}{have:>13}  {'; '.join(notes)}")
+    print(f"\n{len(interesting)} keys examined, {orphans} orphaned, {dupes} duplicated.")
+    if orphans:
+        print("An ORPHANED extract cannot be re-fetched and may be the only copy "
+              "left of that document. Do not delete it to force a re-extraction.")
+    return 1 if orphans else 0
+
+
 def extract_pages(out: Path, key: str) -> int:
     """How many pages the mirror's own extract says this paper has, or 0.
 
@@ -188,6 +266,10 @@ def main() -> int:
                          "than one attachment: Muller2020Yield-2 is the second, "
                          "matching text/<key>-2.md in the mirror")
     ap.add_argument("--search", metavar="TEXT", help="find citation keys by title/author/DOI")
+    ap.add_argument("--attachments", action="store_true",
+                    help="report attachments held per key against extracts written, "
+                         "downloading nothing. With no keys, sweeps every record "
+                         "that has more than one extract")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="mirror directory")
     ap.add_argument("--dest", type=Path, default=None,
                     help=f"where to put the PDFs (default: {cache_dir()})")
@@ -207,8 +289,8 @@ def main() -> int:
             print(f"... and {len(hits) - 40} more")
         return 0
 
-    if not args.keys:
-        ap.error("give at least one citation key, or --search TEXT")
+    if not args.keys and not args.attachments:
+        ap.error("give at least one citation key, or --search TEXT, or --attachments")
 
     keymap = load_json(mirror_state_dir(out) / "citekeys.json", {})
     if not keymap:
@@ -217,6 +299,13 @@ def main() -> int:
     # another service's id would 404 at best, and at worst match a different paper.
     by_key = {key: raw for ident, key in keymap.items()
               if (raw := local_id(ident)) is not None}
+
+    if args.attachments:
+        cfg = get_app_config()
+        tokens = load_json(config_dir() / "tokens.json", {})
+        if not tokens.get("access_token"):
+            tokens = interactive_authorize(cfg)
+        return attachment_inventory(Mendeley(cfg, tokens), out, by_key, args.keys)
 
     dest = (args.dest or cache_dir()).expanduser()
     dest.mkdir(parents=True, exist_ok=True)
@@ -275,8 +364,10 @@ def main() -> int:
         if len(pdfs) > 1 and nth == 1:
             # Say it, rather than let a reader assume one attachment exists. The
             # first is not always the paper.
+            others = (f"{key}-2" if len(pdfs) == 2
+                      else f"{key}-2 .. {key}-{len(pdfs)}")
             print(f"({key}: {len(pdfs)} PDF attachments; serving the first. "
-                  f"The others are {key}-2 .. {key}-{len(pdfs)})", file=sys.stderr)
+                  f"The others are {others})", file=sys.stderr)
 
         resp = client.get(f"{API}/files/{chosen['id']}", accept="*/*", allow_redirects=False)
         if resp.status_code in (301, 302, 303, 307):
